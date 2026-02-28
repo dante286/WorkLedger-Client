@@ -1,0 +1,36 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="WorkLedger_Client.Views.ProjectDialog"
+        Width="420" Height="360"
+        Title="Project"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        ShowInTaskbar="False">
+
+  <Border Padding="12" CornerRadius="8" BorderBrush="#E0E0E0" BorderThickness="1">
+    <StackPanel Spacing="10">
+      <TextBlock Text="Create Project" FontSize="16" FontWeight="Bold" />
+
+      <StackPanel>
+        <TextBlock Text="Name" Margin="0,4,0,2" />
+        <TextBox x:Name="NameBox" Watermark="Project name" />
+      </StackPanel>
+
+      <StackPanel>
+        <TextBlock Text="Project Code" Margin="0,4,0,2" />
+        <TextBox x:Name="CodeBox" Watermark="Code" />
+      </StackPanel>
+
+      <StackPanel>
+        <TextBlock Text="Description" Margin="0,4,0,2" />
+        <TextBox x:Name="DescriptionBox" AcceptsReturn="True" Height="100" />
+      </StackPanel>
+
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+        <Button Content="Cancel" Click="OnCancel" MinWidth="80" />
+        <Button Content="OK" Click="OnOk" IsDefault="True" MinWidth="80" Background="#0B79FF" Foreground="White" />
+      </StackPanel>
+    </StackPanel>
+  </Border>
+
+</Window>

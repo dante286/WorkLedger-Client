@@ -1,0 +1,22 @@
+﻿using SQLite;
+using System;
+
+namespace WorkLedger_Client.Models
+{
+    public class Project
+    {
+        [PrimaryKey, AutoIncrement]
+        public int Id { get; set; }
+
+        [Indexed]
+        public string? Name { get; set; }
+
+        public string? ProjectCode { get; set; }
+
+        public string? Description { get; set; }
+
+        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+        public DateTime? UpdatedAt { get; set; }
+    }
+}

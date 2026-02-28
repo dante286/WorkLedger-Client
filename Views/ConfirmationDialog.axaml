@@ -1,0 +1,28 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:views="clr-namespace:WorkLedger_Client.Views"
+        x:Class="WorkLedger_Client.Views.ConfirmationDialog"
+        x:DataType="views:ConfirmationDialog"
+        Width="350" Height="120"
+        Title="Confirm Delete"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        ShowInTaskbar="False">
+
+  <Border Padding="20">
+    <StackPanel Spacing="20">
+      <TextBlock>
+        <Run Text="Are you sure you want to" />
+        <Run Text="{Binding Action}" />
+        <Run Text="this" />
+        <Run Text="{Binding ItemType}" />
+        <Run Text="?" />
+      </TextBlock>
+
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+        <Button Content="No" Click="OnNo" MinWidth="80" />
+        <Button Content="Yes" Click="OnYes" IsDefault="True" MinWidth="80" />
+      </StackPanel>
+    </StackPanel>
+  </Border>
+</Window>

@@ -1,0 +1,9 @@
+.vs/*
+.idea/*
+
+obj/*
+bin/*
+*.user
+.aider*
+
+CLAUDE.md
