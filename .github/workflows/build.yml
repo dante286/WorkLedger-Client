@@ -1,0 +1,118 @@
+name: Build and Package WorkLedger
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+
+    - name: Restore dependencies
+      run: dotnet restore
+
+    - name: Build
+      run: dotnet build --configuration Release --no-restore
+
+    - name: Test
+      run: dotnet test --configuration Release --no-build
+
+    - name: Publish Windows
+      if: matrix.os == 'windows-latest'
+      run: |
+        # Publish for Windows
+        dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -o ./publish/win-x64
+        # Create installer using NSIS
+        choco install nsis -y
+        # Create NSIS installer script
+        echo '!include "MUI2.nsh"' > installer.nsi
+        echo 'Name "WorkLedger"' >> installer.nsi
+        echo 'OutFile "WorkLedger-setup.exe"' >> installer.nsi
+        echo 'InstallDir $PROGRAMFILES\WorkLedger' >> installer.nsi
+        echo 'Section "MainSection"' >> installer.nsi
+        echo '  SetOutPath $INSTDIR' >> installer.nsi
+        echo '  File /r ./publish/win-x64\*' >> installer.nsi
+        echo 'SectionEnd' >> installer.nsi
+        makensis -NOCD ./installer.nsi
+
+    - name: Publish macOS
+      if: matrix.os == 'macos-latest'
+      run: |
+        # Publish for macOS
+        dotnet publish -c Release -r osx-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -o ./publish/osx-x64
+        # Create DMG installer
+        mkdir -p ./dmg-workspace
+        cp -r ./publish/osx-x64/* ./dmg-workspace/
+        hdiutil create -srcfolder ./dmg-workspace -volname "WorkLedger" -ov -format UDZO ./WorkLedger.dmg
+
+    - name: Publish Linux (deb)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        # Publish for Linux
+        dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -o ./publish/linux-x64
+        # Create deb package using fpm
+        sudo apt-get update
+        sudo apt-get install -y ruby ruby-dev build-essential
+        sudo gem install fpm
+        fpm -s dir -t deb -n workledger -v 1.0.0 -C ./publish/linux-x64 --name workledger --description "Cross-platform time tracking application"
+
+    - name: Publish Linux (rpm)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        # Create rpm package using fpm
+        fpm -s dir -t rpm -n workledger -v 1.0.0 -C ./publish/linux-x64 --name workledger --description "Cross-platform time tracking application"
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: workledger-${{ matrix.os }}
+        path: |
+          ./publish/**
+          ./*.deb
+          ./*.rpm
+          ./*.dmg
+          ./*.exe
+
+  release:
+    needs: build
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Get tag name
+      id: tag
+      run: |
+        if [[ ${{ github.ref }} == refs/tags/* ]]; then
+          echo "tag_name=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        else
+          echo "tag_name=main" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Download all workflow run artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: ./artifacts
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ steps.tag.outputs.tag_name }}
+        name: Release ${{ steps.tag.outputs.tag_name }}
+        draft: false
+        prerelease: false
+        files: |
+          ./artifacts/**/*
