@@ -51,7 +51,8 @@ jobs:
         echo '  File /r "publish\win-x64\*"' >> installer.nsi
         echo '  CreateShortcut "$SMPROGRAMS\WorkLedger.lnk" "$INSTDIR\WorkLedger-Client.exe"' >> installer.nsi
         echo 'SectionEnd' >> installer.nsi
-        makensis ./installer.nsi
+        # makensis is pre-installed but not in PATH on some runners
+        "C:\Program Files (x86)\NSIS\makensis.exe" ./installer.nsi
         # Cleanup publish folder to save space
         rm -rf ./publish/win-x64
 
