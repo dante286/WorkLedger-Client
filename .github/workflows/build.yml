@@ -35,9 +35,17 @@ jobs:
       run: |
         # Publish for Windows
         dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -o ./publish/win-x64
-        # Create installer using NSIS
-        # Ensure NSIS is installed and in PATH
+
+    - name: Install NSIS
+      if: matrix.os == 'windows-latest'
+      run: |
         choco install nsis -y
+        # Add NSIS to PATH for subsequent steps
+        echo "C:\Program Files (x86)\NSIS" >> $env:GITHUB_PATH
+
+    - name: Package Windows
+      if: matrix.os == 'windows-latest'
+      run: |
         # Create NSIS installer script
         echo '!include "MUI2.nsh"' > installer.nsi
         echo 'Name "WorkLedger"' >> installer.nsi
@@ -52,7 +60,7 @@ jobs:
         echo '  File /r "publish\win-x64\*"' >> installer.nsi
         echo '  CreateShortcut "$SMPROGRAMS\WorkLedger.lnk" "$INSTDIR\WorkLedger-Client.exe"' >> installer.nsi
         echo 'SectionEnd' >> installer.nsi
-        # makensis should be in PATH after choco install
+        # makensis should be in PATH after Install NSIS step
         makensis ./installer.nsi
         # Cleanup publish folder to save space
         rm -rf ./publish/win-x64
