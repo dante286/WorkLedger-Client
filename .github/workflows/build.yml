@@ -36,17 +36,24 @@ jobs:
         # Publish for Windows
         dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -o ./publish/win-x64
         # Create installer using NSIS
-        choco install nsis -y
+        # NSIS is already pre-installed on windows-latest runner
         # Create NSIS installer script
         echo '!include "MUI2.nsh"' > installer.nsi
         echo 'Name "WorkLedger"' >> installer.nsi
         echo 'OutFile "WorkLedger-setup.exe"' >> installer.nsi
-        echo 'InstallDir $PROGRAMFILES\WorkLedger' >> installer.nsi
+        echo 'InstallDir "$PROGRAMFILES\WorkLedger"' >> installer.nsi
+        echo 'RequestExecutionLevel admin' >> installer.nsi
+        echo '!insertmacro MUI_PAGE_DIRECTORY' >> installer.nsi
+        echo '!insertmacro MUI_PAGE_INSTFILES' >> installer.nsi
+        echo '!insertmacro MUI_LANGUAGE "English"' >> installer.nsi
         echo 'Section "MainSection"' >> installer.nsi
-        echo '  SetOutPath $INSTDIR' >> installer.nsi
-        echo '  File /r ./publish/win-x64\*' >> installer.nsi
+        echo '  SetOutPath "$INSTDIR"' >> installer.nsi
+        echo '  File /r "publish\win-x64\*"' >> installer.nsi
+        echo '  CreateShortcut "$SMPROGRAMS\WorkLedger.lnk" "$INSTDIR\WorkLedger-Client.exe"' >> installer.nsi
         echo 'SectionEnd' >> installer.nsi
-        makensis -NOCD ./installer.nsi
+        makensis ./installer.nsi
+        # Cleanup publish folder to save space
+        rm -rf ./publish/win-x64
 
     - name: Publish macOS
       if: matrix.os == 'macos-latest'
@@ -54,9 +61,13 @@ jobs:
         # Publish for macOS
         dotnet publish -c Release -r osx-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -o ./publish/osx-x64
         # Create DMG installer
-        mkdir -p ./dmg-workspace
-        cp -r ./publish/osx-x64/* ./dmg-workspace/
-        hdiutil create -srcfolder ./dmg-workspace -volname "WorkLedger" -ov -format UDZO ./WorkLedger.dmg
+        # We've seen "No space left on device" errors with hdiutil on GitHub runners.
+        # This can be due to hdiutil using a temporary mount point that exhausts the runner's disk.
+        # Removing unnecessary files and using a simpler creation command can help.
+        # We also remove the intermediate dmg-workspace to save space.
+        hdiutil create -volname "WorkLedger" -srcfolder ./publish/osx-x64 -ov -format UDZO WorkLedger.dmg
+        # Cleanup publish folder to save space
+        rm -rf ./publish/osx-x64
 
     - name: Publish Linux (deb)
       if: matrix.os == 'ubuntu-latest'
@@ -65,7 +76,7 @@ jobs:
         dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -o ./publish/linux-x64
         # Create deb package using fpm
         sudo apt-get update
-        sudo apt-get install -y ruby ruby-dev build-essential
+        sudo apt-get install -y ruby ruby-dev build-essential rpm
         sudo gem install fpm
         fpm -s dir -t deb -n workledger -v 1.0.0 -C ./publish/linux-x64 --name workledger --description "Cross-platform time tracking application"
 
@@ -74,6 +85,8 @@ jobs:
       run: |
         # Create rpm package using fpm
         fpm -s dir -t rpm -n workledger -v 1.0.0 -C ./publish/linux-x64 --name workledger --description "Cross-platform time tracking application"
+        # Cleanup publish folder to save space
+        rm -rf ./publish/linux-x64
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4

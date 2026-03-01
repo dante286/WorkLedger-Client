@@ -33,4 +33,8 @@
       <DependentUpon>ConfirmationDialog.axaml</DependentUpon>
     </Compile>
   </ItemGroup>
+
+  <ItemGroup>
+    <Content Include=".github\workflows\build.yml" />
+  </ItemGroup>
 </Project>
