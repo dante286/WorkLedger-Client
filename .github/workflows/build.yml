@@ -63,7 +63,7 @@ jobs:
         # makensis should be in PATH after Install NSIS step
         makensis ./installer.nsi
         # Cleanup publish folder to save space
-        rm -rf ./publish/win-x64
+        Remove-Item -Recurse -Force ./publish/win-x64
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
