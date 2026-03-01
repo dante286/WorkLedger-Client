@@ -11,7 +11,7 @@ jobs:
 
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [windows-latest]
 
     steps:
     - uses: actions/checkout@v4
@@ -56,49 +56,12 @@ jobs:
         # Cleanup publish folder to save space
         rm -rf ./publish/win-x64
 
-    - name: Publish macOS
-      if: matrix.os == 'macos-latest'
-      run: |
-        # Publish for macOS
-        dotnet publish -c Release -r osx-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -o ./publish/osx-x64
-        # Create DMG installer
-        # We've seen "No space left on device" errors with hdiutil on GitHub runners.
-        # This can be due to hdiutil using a temporary mount point that exhausts the runner's disk.
-        # Removing unnecessary files and using a simpler creation command can help.
-        # We also remove the intermediate dmg-workspace to save space.
-        hdiutil create -volname "WorkLedger" -srcfolder ./publish/osx-x64 -ov -format UDZO WorkLedger.dmg
-        # Cleanup publish folder to save space
-        rm -rf ./publish/osx-x64
-
-    - name: Publish Linux (deb)
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        # Publish for Linux
-        dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -o ./publish/linux-x64
-        # Create deb package using fpm
-        sudo apt-get update
-        sudo apt-get install -y ruby ruby-dev build-essential rpm
-        sudo gem install fpm
-        fpm -s dir -t deb -n workledger -v 1.0.0 -C ./publish/linux-x64 --name workledger --description "Cross-platform time tracking application"
-
-    - name: Publish Linux (rpm)
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        # Create rpm package using fpm
-        fpm -s dir -t rpm -n workledger -v 1.0.0 -C ./publish/linux-x64 --name workledger --description "Cross-platform time tracking application"
-        # Cleanup publish folder to save space
-        rm -rf ./publish/linux-x64
-
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: workledger-${{ matrix.os }}
+        name: workledger-windows
         path: |
-          ./publish/**
-          ./*.deb
-          ./*.rpm
-          ./*.dmg
-          ./*.exe
+          ./WorkLedger-setup.exe
 
   release:
     needs: build
@@ -112,8 +75,10 @@ jobs:
       run: |
         if [[ ${{ github.ref }} == refs/tags/* ]]; then
           echo "tag_name=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          echo "tag_provided=true" >> $GITHUB_OUTPUT
         else
           echo "tag_name=main" >> $GITHUB_OUTPUT
+          echo "tag_provided=false" >> $GITHUB_OUTPUT
         fi
 
     - name: Download all workflow run artifacts
