@@ -100,10 +100,13 @@ jobs:
         # WorkLedger-Client is the output file name
         
         # Create control file
+        VERSION="${GITHUB_REF#refs/tags/v}"
         cat > deb-package/DEBIAN/control <<EOF
         Package: workledger
-        Version: 1.0.0
+        Version: ${VERSION}
         Architecture: amd64
+        ...
+        EOF
         Maintainer: WorkLedger Team
         Description: WorkLedger Client Application
         EOF
@@ -130,22 +133,23 @@ jobs:
         mkdir -p ~/rpmbuild/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
         
         # Create directory structure for RPM sources
-        mkdir -p ~/rpmbuild/SOURCES/workledger-1.0.0
+        mkdir -p ~/rpmbuild/SOURCES/workledger-${VERSION}
         if [ -d "./publish/linux-x64" ]; then
-          cp -r ./publish/linux-x64/. ~/rpmbuild/SOURCES/workledger-1.0.0/
+          cp -r ./publish/linux-x64/. ~/rpmbuild/SOURCES/workledger-${VERSION}/
         else
           echo "Error: ./publish/linux-x64 directory not found"
           exit 1
         fi
         
         # Create tarball
+        VERSION="${GITHUB_REF#refs/tags/v}"
         cd ~/rpmbuild/SOURCES
-        tar -czf workledger-1.0.0.tar.gz workledger-1.0.0
+        tar -czf workledger-${VERSION}.tar.gz workledger-${VERSION}
         
         # Create RPM spec file
         cat > ~/rpmbuild/SPECS/workledger.spec <<EOF
         Name: workledger
-        Version: 1.0.0
+        Version: ${VERSION}
         Release: 1
         Summary: WorkLedger Client Application
         License: Proprietary
@@ -180,7 +184,7 @@ jobs:
         /usr/share/applications/workledger.desktop
         
         %changelog
-        * $(date +"%a %b %d %Y") WorkLedger Team <workledger@example.com> - 1.0.0-1
+        * $(date +"%a %b %d %Y") WorkLedger Team <workledger@example.com> - ${VERSION}-1
         - Initial RPM package
         EOF
         
@@ -188,7 +192,7 @@ jobs:
         rpmbuild -bb ~/rpmbuild/SPECS/workledger.spec
         
         # Copy RPM to current directory
-        cp ~/rpmbuild/RPMS/x86_64/workledger-1.0.0-1.x86_64.rpm ./workledger.rpm
+        cp ~/rpmbuild/RPMS/x86_64/workledger-${VERSION}-1.x86_64.rpm ./workledger.rpm
         
         # Cleanup
         rm -rf ~/rpmbuild
