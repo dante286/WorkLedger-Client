@@ -52,6 +52,12 @@ jobs:
         # Add NSIS to PATH for subsequent steps
         echo "C:\Program Files (x86)\NSIS" >> $env:GITHUB_PATH
 
+    - name: Install RPM build tools
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y rpm
+
     - name: Package Windows
       if: matrix.os == 'windows-latest'
       run: |
@@ -112,6 +118,71 @@ jobs:
         # Cleanup
         rm -rf deb-package
         rm -rf ./publish/linux-x64
+        
+    - name: Package Linux (RPM)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        # Create RPM build directory structure
+        mkdir -p ~/rpmbuild/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
+        
+        # Create directory structure for RPM sources
+        mkdir -p ~/rpmbuild/SOURCES/workledger-1.0.0
+        cp -r ./publish/linux-x64/* ~/rpmbuild/SOURCES/workledger-1.0.0/
+        
+        # Create tarball
+        cd ~/rpmbuild/SOURCES
+        tar -czf workledger-1.0.0.tar.gz workledger-1.0.0
+        
+        # Create RPM spec file
+        cat > ~/rpmbuild/SPECS/workledger.spec <<EOF
+        Name: workledger
+        Version: 1.0.0
+        Release: 1
+        Summary: WorkLedger Client Application
+        License: Proprietary
+        BuildArch: x86_64
+        
+        %description
+        WorkLedger Client Application
+        
+        %prep
+        %setup -q
+        
+        %build
+        
+        %install
+        mkdir -p %{buildroot}/usr/bin
+        mkdir -p %{buildroot}/usr/share/applications
+        cp -r * %{buildroot}/usr/bin/
+        
+        # Create desktop entry
+        mkdir -p %{buildroot}/usr/share/applications
+        cat > %{buildroot}/usr/share/applications/workledger.desktop <<DESKTOP_EOF
+        [Desktop Entry]
+        Name=WorkLedger
+        Exec=/usr/bin/WorkLedger-Client
+        Type=Application
+        Categories=Utility;
+        DESKTOP_EOF
+        
+        %files
+        /usr/bin/*
+        /usr/share/applications/workledger.desktop
+        
+        %changelog
+        * $(date +"%a %b %d %Y") WorkLedger Team <workledger@example.com> - 1.0.0-1
+        - Initial RPM package
+        EOF
+        
+        # Build the RPM
+        rpmbuild -bb ~/rpmbuild/SPECS/workledger.spec
+        
+        # Copy RPM to current directory
+        cp ~/rpmbuild/RPMS/x86_64/workledger-1.0.0-1.x86_64.rpm ./workledger.rpm
+        
+        # Cleanup
+        rm -rf ~/rpmbuild
+        rm -rf ./publish/linux-x64
 
     - name: Upload Windows Artifact
       if: matrix.os == 'windows-latest'
@@ -128,6 +199,7 @@ jobs:
         name: workledger-linux
         path: |
           ./workledger.deb
+          ./workledger.rpm
 
   release:
     needs: build
