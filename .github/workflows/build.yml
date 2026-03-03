@@ -105,8 +105,6 @@ jobs:
         Package: workledger
         Version: ${VERSION}
         Architecture: amd64
-        ...
-        EOF
         Maintainer: WorkLedger Team
         Description: WorkLedger Client Application
         EOF
