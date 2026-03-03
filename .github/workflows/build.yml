@@ -14,7 +14,7 @@ jobs:
 
     strategy:
       matrix:
-        os: [windows-latest]
+        os: [windows-latest, ubuntu-latest]
 
     steps:
     - uses: actions/checkout@v4
@@ -38,6 +38,12 @@ jobs:
       run: |
         # Publish for Windows
         dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -o ./publish/win-x64
+
+    - name: Publish Linux
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        # Publish for Linux
+        dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -o ./publish/linux-x64
 
     - name: Install NSIS
       if: matrix.os == 'windows-latest'
@@ -68,12 +74,60 @@ jobs:
         # Cleanup publish folder to save space
         Remove-Item -Recurse -Force ./publish/win-x64
 
-    - name: Upload Artifacts
+    - name: Package Linux (Debian)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        # Create Debian package structure
+        mkdir -p deb-package/usr/bin
+        mkdir -p deb-package/DEBIAN
+        mkdir -p deb-package/usr/share/applications
+        
+        # Copy published files to package structure
+        cp -r ./publish/linux-x64/* deb-package/usr/bin/
+        
+        # Rename binary to lower case for Linux convention if needed, or keep it as is
+        # WorkLedger-Client is the output file name
+        
+        # Create control file
+        cat > deb-package/DEBIAN/control <<EOF
+        Package: workledger
+        Version: 1.0.0
+        Architecture: amd64
+        Maintainer: WorkLedger Team
+        Description: WorkLedger Client Application
+        EOF
+        
+        # Create desktop entry
+        cat > deb-package/usr/share/applications/workledger.desktop <<EOF
+        [Desktop Entry]
+        Name=WorkLedger
+        Exec=/usr/bin/WorkLedger-Client
+        Type=Application
+        Categories=Utility;
+        EOF
+        
+        # Build the deb package
+        dpkg-deb --build deb-package workledger.deb
+        
+        # Cleanup
+        rm -rf deb-package
+        rm -rf ./publish/linux-x64
+
+    - name: Upload Windows Artifact
+      if: matrix.os == 'windows-latest'
       uses: actions/upload-artifact@v4
       with:
         name: workledger-windows
         path: |
           ./WorkLedger-setup.exe
+
+    - name: Upload Linux Artifact
+      if: matrix.os == 'ubuntu-latest'
+      uses: actions/upload-artifact@v4
+      with:
+        name: workledger-linux
+        path: |
+          ./workledger.deb
 
   release:
     needs: build
