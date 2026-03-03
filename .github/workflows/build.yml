@@ -150,6 +150,7 @@ jobs:
         Summary: WorkLedger Client Application
         License: Proprietary
         BuildArch: x86_64
+        Source0: %{name}-%{version}.tar.gz
         
         %description
         WorkLedger Client Application
