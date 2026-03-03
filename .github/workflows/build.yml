@@ -117,7 +117,6 @@ jobs:
         
         # Cleanup
         rm -rf deb-package
-        rm -rf ./publish/linux-x64
         
     - name: Package Linux (RPM)
       if: matrix.os == 'ubuntu-latest'
@@ -183,6 +182,7 @@ jobs:
         # Cleanup
         rm -rf ~/rpmbuild
         rm -rf ./publish/linux-x64
+        rm -rf ./publish/win-x64
 
     - name: Upload Windows Artifact
       if: matrix.os == 'windows-latest'
