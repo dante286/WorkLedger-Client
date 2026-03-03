@@ -89,7 +89,12 @@ jobs:
         mkdir -p deb-package/usr/share/applications
         
         # Copy published files to package structure
-        cp -r ./publish/linux-x64/* deb-package/usr/bin/
+        if [ -d "./publish/linux-x64" ]; then
+          cp -r ./publish/linux-x64/. deb-package/usr/bin/
+        else
+          echo "Error: ./publish/linux-x64 directory not found"
+          exit 1
+        fi
         
         # Rename binary to lower case for Linux convention if needed, or keep it as is
         # WorkLedger-Client is the output file name
@@ -126,7 +131,12 @@ jobs:
         
         # Create directory structure for RPM sources
         mkdir -p ~/rpmbuild/SOURCES/workledger-1.0.0
-        cp -r ./publish/linux-x64/* ~/rpmbuild/SOURCES/workledger-1.0.0/
+        if [ -d "./publish/linux-x64" ]; then
+          cp -r ./publish/linux-x64/. ~/rpmbuild/SOURCES/workledger-1.0.0/
+        else
+          echo "Error: ./publish/linux-x64 directory not found"
+          exit 1
+        fi
         
         # Create tarball
         cd ~/rpmbuild/SOURCES
