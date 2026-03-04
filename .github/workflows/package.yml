@@ -1,0 +1,181 @@
+﻿name: Package and Release WorkLedger
+
+on:
+  push:
+    tags: [ 'v*' ]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test --configuration Release --no-build
+
+      - name: Get version from tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Publish Windows
+        if: matrix.os == 'windows-latest'
+        run: dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -o ./publish/win-x64
+
+      - name: Publish Linux
+        if: matrix.os == 'ubuntu-latest'
+        run: dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -o ./publish/linux-x64
+
+      - name: Install NSIS
+        if: matrix.os == 'windows-latest'
+        run: |
+          choco install nsis -y
+          echo "C:\Program Files (x86)\NSIS" >> $env:GITHUB_PATH
+
+      - name: Install RPM build tools
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm
+
+      - name: Package Windows
+        if: matrix.os == 'windows-latest'
+        run: |
+          echo '!include "MUI2.nsh"' > installer.nsi
+          echo 'Name "WorkLedger"' >> installer.nsi
+          echo 'OutFile "WorkLedger-setup.exe"' >> installer.nsi
+          echo 'InstallDir "$PROGRAMFILES\WorkLedger"' >> installer.nsi
+          echo 'RequestExecutionLevel admin' >> installer.nsi
+          echo '!insertmacro MUI_PAGE_DIRECTORY' >> installer.nsi
+          echo '!insertmacro MUI_PAGE_INSTFILES' >> installer.nsi
+          echo '!insertmacro MUI_LANGUAGE "English"' >> installer.nsi
+          echo 'Section "MainSection"' >> installer.nsi
+          echo '  SetOutPath "$INSTDIR"' >> installer.nsi
+          echo '  File /r "publish\win-x64\*"' >> installer.nsi
+          echo '  CreateShortcut "$SMPROGRAMS\WorkLedger.lnk" "$INSTDIR\WorkLedger-Client.exe"' >> installer.nsi
+          echo 'SectionEnd' >> installer.nsi
+          makensis ./installer.nsi
+          Remove-Item -Recurse -Force ./publish/win-x64
+
+      - name: Package Linux (Debian)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          mkdir -p deb-package/usr/bin deb-package/DEBIAN deb-package/usr/share/applications
+          cp -r ./publish/linux-x64/. deb-package/usr/bin/
+          cat > deb-package/DEBIAN/control <<EOF
+          Package: workledger
+          Version: ${VERSION}
+          Architecture: amd64
+          Maintainer: WorkLedger Team
+          Description: WorkLedger Client Application
+          EOF
+          cat > deb-package/usr/share/applications/workledger.desktop <<EOF
+          [Desktop Entry]
+          Name=WorkLedger
+          Exec=/usr/bin/WorkLedger-Client
+          Type=Application
+          Categories=Utility;
+          EOF
+          dpkg-deb --build deb-package workledger.deb
+          rm -rf deb-package
+
+      - name: Package Linux (RPM)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          mkdir -p ~/rpmbuild/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
+          mkdir -p ~/rpmbuild/SOURCES/workledger-${VERSION}
+          cp -r ./publish/linux-x64/. ~/rpmbuild/SOURCES/workledger-${VERSION}/
+          cd ~/rpmbuild/SOURCES && tar -czf workledger-${VERSION}.tar.gz workledger-${VERSION}
+          cat > ~/rpmbuild/SPECS/workledger.spec <<EOF
+          Name: workledger
+          Version: ${VERSION}
+          Release: 1
+          Summary: WorkLedger Client Application
+          License: Proprietary
+          BuildArch: x86_64
+          Source0: %{name}-%{version}.tar.gz
+          %description
+          WorkLedger Client Application
+          %prep
+          %setup -q
+          %build
+          %install
+          mkdir -p %{buildroot}/usr/bin %{buildroot}/usr/share/applications
+          cp -r * %{buildroot}/usr/bin/
+          cat > %{buildroot}/usr/share/applications/workledger.desktop <<DESKTOP_EOF
+          [Desktop Entry]
+          Name=WorkLedger
+          Exec=/usr/bin/WorkLedger-Client
+          Type=Application
+          Categories=Utility;
+          DESKTOP_EOF
+          %files
+          /usr/bin/*
+          /usr/share/applications/workledger.desktop
+          %changelog
+          * $(date +"%a %b %d %Y") WorkLedger Team <workledger@example.com> - ${VERSION}-1
+          - Release ${VERSION}
+          EOF
+          rpmbuild -bb ~/rpmbuild/SPECS/workledger.spec
+          cp ~/rpmbuild/RPMS/x86_64/workledger-${VERSION}-1.x86_64.rpm ./workledger.rpm
+          rm -rf ~/rpmbuild ./publish/linux-x64
+
+      - name: Upload Windows Artifact
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: workledger-windows
+          path: ./WorkLedger-setup.exe
+
+      - name: Upload Linux Artifact
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: workledger-linux
+          path: |
+            ./workledger.deb
+            ./workledger.rpm
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get tag name
+        id: tag
+        run: echo "tag_name=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag_name }}
+          name: Release ${{ steps.tag.outputs.tag_name }}
+          draft: false
+          prerelease: false
+          files: ./artifacts/**/*

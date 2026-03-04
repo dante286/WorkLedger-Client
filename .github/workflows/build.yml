@@ -1,244 +1,31 @@
-name: Build and Package WorkLedger
+name: CI Build
 
 on:
   push:
     branches: [ main ]
-    tags: [ 'v*' ]
-
-permissions:
-  contents: write
+  pull_request:
+    branches: [ main ]
 
 jobs:
   build:
     runs-on: ${{ matrix.os }}
-
     strategy:
       matrix:
         os: [windows-latest, ubuntu-latest]
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Setup .NET
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: '10.0.x'
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
 
-    - name: Restore dependencies
-      run: dotnet restore
+      - name: Restore dependencies
+        run: dotnet restore
 
-    - name: Build
-      run: dotnet build --configuration Release --no-restore
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
 
-    - name: Test
-      run: dotnet test --configuration Release --no-build
-
-    - name: Publish Windows
-      if: matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v')
-      run: |
-        # Publish for Windows
-        dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -o ./publish/win-x64
-
-    - name: Publish Linux
-      if: matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v')
-      run: |
-        # Publish for Linux
-        dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -o ./publish/linux-x64
-
-    - name: Install NSIS
-      if: matrix.os == 'windows-latest'
-      run: |
-        choco install nsis -y
-        # Add NSIS to PATH for subsequent steps
-        echo "C:\Program Files (x86)\NSIS" >> $env:GITHUB_PATH
-
-    - name: Install RPM build tools
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y rpm
-
-    - name: Package Windows
-      if: matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v')
-      run: |
-        # Create NSIS installer script
-        echo '!include "MUI2.nsh"' > installer.nsi
-        echo 'Name "WorkLedger"' >> installer.nsi
-        echo 'OutFile "WorkLedger-setup.exe"' >> installer.nsi
-        echo 'InstallDir "$PROGRAMFILES\WorkLedger"' >> installer.nsi
-        echo 'RequestExecutionLevel admin' >> installer.nsi
-        echo '!insertmacro MUI_PAGE_DIRECTORY' >> installer.nsi
-        echo '!insertmacro MUI_PAGE_INSTFILES' >> installer.nsi
-        echo '!insertmacro MUI_LANGUAGE "English"' >> installer.nsi
-        echo 'Section "MainSection"' >> installer.nsi
-        echo '  SetOutPath "$INSTDIR"' >> installer.nsi
-        echo '  File /r "publish\win-x64\*"' >> installer.nsi
-        echo '  CreateShortcut "$SMPROGRAMS\WorkLedger.lnk" "$INSTDIR\WorkLedger-Client.exe"' >> installer.nsi
-        echo 'SectionEnd' >> installer.nsi
-        # makensis should be in PATH after Install NSIS step
-        makensis ./installer.nsi
-        # Cleanup publish folder to save space
-        Remove-Item -Recurse -Force ./publish/win-x64
-
-    - name: Package Linux (Debian)
-      if: matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v')
-      run: |
-        # Create Debian package structure
-        mkdir -p deb-package/usr/bin
-        mkdir -p deb-package/DEBIAN
-        mkdir -p deb-package/usr/share/applications
-        
-        # Copy published files to package structure
-        if [ -d "./publish/linux-x64" ]; then
-          cp -r ./publish/linux-x64/. deb-package/usr/bin/
-        else
-          echo "Error: ./publish/linux-x64 directory not found"
-          exit 1
-        fi
-        
-        # Rename binary to lower case for Linux convention if needed, or keep it as is
-        # WorkLedger-Client is the output file name
-        
-        # Create control file
-        VERSION="${GITHUB_REF#refs/tags/v}"
-        cat > deb-package/DEBIAN/control <<EOF
-        Package: workledger
-        Version: ${VERSION}
-        Architecture: amd64
-        Maintainer: WorkLedger Team
-        Description: WorkLedger Client Application
-        EOF
-        
-        # Create desktop entry
-        cat > deb-package/usr/share/applications/workledger.desktop <<EOF
-        [Desktop Entry]
-        Name=WorkLedger
-        Exec=/usr/bin/WorkLedger-Client
-        Type=Application
-        Categories=Utility;
-        EOF
-        
-        # Build the deb package
-        dpkg-deb --build deb-package workledger.deb
-        
-        # Cleanup
-        rm -rf deb-package
-        
-    - name: Package Linux (RPM)
-      if: matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v')
-      run: |
-        # Create RPM build directory structure
-        mkdir -p ~/rpmbuild/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
-        
-        # Create directory structure for RPM sources
-        mkdir -p ~/rpmbuild/SOURCES/workledger-${VERSION}
-        if [ -d "./publish/linux-x64" ]; then
-          cp -r ./publish/linux-x64/. ~/rpmbuild/SOURCES/workledger-${VERSION}/
-        else
-          echo "Error: ./publish/linux-x64 directory not found"
-          exit 1
-        fi
-        
-        # Create tarball
-        VERSION="${GITHUB_REF#refs/tags/v}"
-        cd ~/rpmbuild/SOURCES
-        tar -czf workledger-${VERSION}.tar.gz workledger-${VERSION}
-        
-        # Create RPM spec file
-        cat > ~/rpmbuild/SPECS/workledger.spec <<EOF
-        Name: workledger
-        Version: ${VERSION}
-        Release: 1
-        Summary: WorkLedger Client Application
-        License: Proprietary
-        BuildArch: x86_64
-        Source0: %{name}-%{version}.tar.gz
-        
-        %description
-        WorkLedger Client Application
-        
-        %prep
-        %setup -q
-        
-        %build
-        
-        %install
-        mkdir -p %{buildroot}/usr/bin
-        mkdir -p %{buildroot}/usr/share/applications
-        cp -r * %{buildroot}/usr/bin/
-        
-        # Create desktop entry
-        mkdir -p %{buildroot}/usr/share/applications
-        cat > %{buildroot}/usr/share/applications/workledger.desktop <<DESKTOP_EOF
-        [Desktop Entry]
-        Name=WorkLedger
-        Exec=/usr/bin/WorkLedger-Client
-        Type=Application
-        Categories=Utility;
-        DESKTOP_EOF
-        
-        %files
-        /usr/bin/*
-        /usr/share/applications/workledger.desktop
-        
-        %changelog
-        * $(date +"%a %b %d %Y") WorkLedger Team <workledger@example.com> - ${VERSION}-1
-        - Initial RPM package
-        EOF
-        
-        # Build the RPM
-        rpmbuild -bb ~/rpmbuild/SPECS/workledger.spec
-        
-        # Copy RPM to current directory
-        cp ~/rpmbuild/RPMS/x86_64/workledger-${VERSION}-1.x86_64.rpm ./workledger.rpm
-        
-        # Cleanup
-        rm -rf ~/rpmbuild
-        rm -rf ./publish/linux-x64
-        rm -rf ./publish/win-x64
-
-    - name: Upload Windows Artifact
-      if: matrix.os == 'windows-latest'
-      uses: actions/upload-artifact@v4
-      with:
-        name: workledger-windows
-        path: |
-          ./WorkLedger-setup.exe
-
-    - name: Upload Linux Artifact
-      if: matrix.os == 'ubuntu-latest'
-      uses: actions/upload-artifact@v4
-      with:
-        name: workledger-linux
-        path: |
-          ./workledger.deb
-          ./workledger.rpm
-
-  release:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Get tag name
-      id: tag
-      run: |
-        echo "tag_name=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-        echo "tag_provided=true" >> $GITHUB_OUTPUT
-
-    - name: Download all workflow run artifacts
-      uses: actions/download-artifact@v4
-      with:
-        path: ./artifacts
-
-    - name: Create Release
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: ${{ steps.tag.outputs.tag_name }}
-        name: Release ${{ steps.tag.outputs.tag_name }}
-        draft: false
-        prerelease: false
-        files: |
-          ./artifacts/**/*
-          
+      - name: Test
+        run: dotnet test --configuration Release --no-build

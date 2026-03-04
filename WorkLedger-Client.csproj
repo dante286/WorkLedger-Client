@@ -36,6 +36,7 @@
 
   <ItemGroup>
     <Content Include=".github\workflows\build.yml" />
+    <Content Include=".github\workflows\package.yml" />
     <Content Include=".github\workflows\release-please.yml" />
   </ItemGroup>
 </Project>
