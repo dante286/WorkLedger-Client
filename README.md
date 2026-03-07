@@ -167,6 +167,16 @@ backend/
  └── requirements.txt
  ```
 
+## DevOps Workflow in GitHub
+Use tag prefixes in commits to ensure that Release Please picks up the commits and will appropriately handle adding commits to the PR.
+PRs will be merged pretty much whenever I think one is ready. 
+Conventional Commits cheat sheet for your team to drive the version bumps:
+| Commit prefix | Version bump |
+|----------|-----------|
+| fix:  | v1.0.X patch |
+| feat: | v1.X.0 minor |
+| feat!: or BREAKING CHANGE: | vX.0.0 major |
+|chore:, docs:, refactor: | no bump |
 
 ## 🚀 Roadmap
 
