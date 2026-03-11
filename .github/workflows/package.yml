@@ -12,7 +12,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        os: [windows-latest, ubuntu-latest, macos-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -43,6 +43,10 @@ jobs:
       - name: Publish Linux
         if: matrix.os == 'ubuntu-latest'
         run: dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -o ./publish/linux-x64
+
+      - name: Publish macOS
+        if: matrix.os == 'macos-latest'
+        run: dotnet publish -c Release -r osx-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -o ./publish/osx-x64
 
       - name: Install NSIS
         if: matrix.os == 'windows-latest'
@@ -140,6 +144,42 @@ jobs:
           cp ~/rpmbuild/RPMS/x86_64/workledger-${VERSION}-1.x86_64.rpm ./workledger.rpm
           rm -rf ~/rpmbuild ./publish/linux-x64
 
+      - name: Package macOS (DMG)
+        if: matrix.os == 'macos-latest'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          mkdir -p WorkLedger.app/Contents/MacOS
+          mkdir -p WorkLedger.app/Contents/Resources
+          cp -r ./publish/osx-x64/. WorkLedger.app/Contents/MacOS/
+          chmod +x WorkLedger.app/Contents/MacOS/WorkLedger-Client
+          
+          cat > WorkLedger.app/Contents/Info.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>WorkLedger-Client</string>
+              <key>CFBundleName</key>
+              <string>WorkLedger</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.workledger.client</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>\${VERSION}</string>
+              <key>CFBundleVersion</key>
+              <string>\${VERSION}</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>10.12</string>
+          </dict>
+          </plist>
+          EOF
+          
+          # Create DMG (using hdiutil on macOS)
+          hdiutil create -volname "WorkLedger" -srcfolder WorkLedger.app -ov -format UDZO WorkLedger.dmg
+          rm -rf WorkLedger.app ./publish/osx-x64
+
       - name: Upload Windows Artifact
         if: matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
@@ -155,6 +195,13 @@ jobs:
           path: |
             ./workledger.deb
             ./workledger.rpm
+
+      - name: Upload macOS Artifact
+        if: matrix.os == 'macos-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: workledger-macos
+          path: ./WorkLedger.dmg
 
   release:
     needs: build
