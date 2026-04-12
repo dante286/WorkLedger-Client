@@ -2,6 +2,33 @@
 A cross‑platform, offline‑first time tracking application focused on project‑level task management, precise time capture, and weekly reporting across desktop and mobile environments.
 WorkLedger is designed for professionals who need a fast, reliable, and structured workflow for tracking work across multiple devices without sacrificing data ownership or portability.
 
+## 📍 Current Implementation Status
+
+### ✅ Implemented (v0.x)
+- ✅ Desktop UI (Avalonia/Windows)
+- ✅ Local SQLite database with sqlite-net-pcl
+- ✅ Project and task management
+- ✅ Time tracking with timer service
+- ✅ MVVM architecture with CommunityToolkit.Mvvm
+- ✅ Archive/unarchive tasks
+- ✅ Time entry management
+
+### 🚧 In Progress
+- 🚧 Sync engine (placeholder directory)
+- 🚧 Authentication (placeholder directory)
+- 🚧 Backend API integration
+
+### 📋 Planned (Roadmap)
+- Backend API (FastAPI + Postgres)
+- Multi-device sync with conflict resolution
+- Mobile apps (Android/iOS)
+- Weekly reporting and analytics
+- Team collaboration features
+
+**Note:** The `Auth/`, `Sync/`, and `LocalDb/` directories are currently placeholders for future implementation. The application currently runs as a standalone desktop app with local-only data storage.
+
+---
+
 ## 🧩 Core Goals
 * Cross‑platform: Windows, macOS, Linux (desktop) + Android/iOS (mobile)
 * Offline‑first: Fully functional without network connectivity
@@ -10,6 +37,53 @@ WorkLedger is designed for professionals who need a fast, reliable, and structur
 * Self‑hosted backend: FastAPI + Postgres for full control and extensibility
 * Minimalist UI: Clean, responsive, and optimized for rapid task switching
 
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+- [.NET 10.0 SDK](https://dotnet.microsoft.com/download) or later
+- Visual Studio 2022, VS Code, or JetBrains Rider
+- Git
+
+### Running Locally
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/dante286/WorkLedger-Client.git
+   cd WorkLedger-Client
+   ```
+
+2. **Restore dependencies:**
+   ```bash
+   dotnet restore
+   ```
+
+3. **Build the project:**
+   ```bash
+   dotnet build
+   ```
+
+4. **Run the application:**
+   ```bash
+   dotnet run
+   ```
+
+The application will automatically create a local SQLite database (`workledger.db`) in the application directory on first run.
+
+### Project Structure Quick Reference
+- **Models/** - Data models (Project, TaskItem, TimeEntry, SyncQueue)
+- **ViewModels/** - MVVM view models with business logic
+- **Views/** - Avalonia XAML UI definitions
+- **Services/** - Core services (LocalDbService, TimerService, AppStateService)
+- **Converters/** - Value converters for data binding
+
+### Troubleshooting
+- **Build errors:** Ensure you have .NET 10.0 SDK installed (`dotnet --version`)
+- **Database issues:** Delete `workledger.db` to reset the local database
+- **UI not loading:** Check that Avalonia packages are properly restored
+
+---
 
 ## 🏗️ Architecture Overview
 High‑Level Architecture
