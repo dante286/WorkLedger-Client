@@ -9,7 +9,10 @@
         x:Class="WorkLedger_Client.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Icon="/Assets/avalonia-logo.ico"
-        Title="WorkLedger">
+        Title="WorkLedger"
+        Background="{DynamicResource Background}"
+        Foreground="{DynamicResource TextPrimary}"
+        FontFamily="{DynamicResource FontBody}">
 
     <Window.Resources>
         <converters:BooleanToTextDecorationsConverter x:Key="BooleanToTextDecorationsConverter"/>
@@ -18,12 +21,27 @@
         <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
     </Window.Resources>
 
-    <!-- Runtime DataContext is provided in App.axaml.cs -->
-    
-    <TabControl>
+    <TabControl Background="Transparent" Padding="0">
+        <TabControl.Styles>
+            <Style Selector="TabItem">
+                <Setter Property="FontSize" Value="{DynamicResource FontSizeLarge}"/>
+                <Setter Property="FontWeight" Value="SemiBold"/>
+                <Setter Property="FontFamily" Value="{DynamicResource FontDisplay}"/>
+                <Setter Property="Padding" Value="20,10"/>
+                <Setter Property="MinHeight" Value="48"/>
+                <Setter Property="VerticalAlignment" Value="Center"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            </Style>
+            <Style Selector="TabItem:selected">
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            </Style>
+            <Style Selector="TabItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+                <Setter Property="TextBlock.Foreground" Value="{DynamicResource TextPrimary}"/>
+            </Style>
+        </TabControl.Styles>
         <!-- Projects Tab -->
         <TabItem Header="Projects">
-            <Grid Margin="12">
+            <Grid Margin="{DynamicResource SpacingMediumThickness}">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
@@ -36,15 +54,15 @@
                         <!-- 1/4 width -->
                         <ColumnDefinition Width="1*"/>
                     </Grid.ColumnDefinitions>
-                    
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" Spacing="12">
+
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" Spacing="{DynamicResource SpacingMedium}">
                         <Button Content="Create Project" Command="{Binding CreateProjectCommand}" />
                     </StackPanel>
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="{DynamicResource SpacingMedium}">
                         <CheckBox Content="Show Archived Tasks" IsChecked="{Binding ShowArchivedTasks}" Margin="0,0,0,10"/>
                     </StackPanel>
                 </Grid>
-                
+
                 <Grid Grid.Row="1">
                     <Grid.ColumnDefinitions>
                         <!-- 1/3 width -->
@@ -52,216 +70,219 @@
                         <!-- 2/3 width -->
                         <ColumnDefinition Width="2*" />
                     </Grid.ColumnDefinitions>
-                    
+
                     <!-- Projects list (left pane) -->
                     <ListBox x:Name="ProjectsList"
-                             Grid.Column="0"
-                             Margin="12,0,0,0"
-                             CornerRadius="6"
-                             BorderThickness="1"
-                             ItemsSource="{Binding Projects}"
-                             SelectedItem="{Binding SelectedProject, Mode=TwoWay}"
-                             HorizontalAlignment="Stretch"
-                             VerticalAlignment="Stretch">
+   	                       Grid.Column="0"
+   	                       Margin="0"
+   	                       CornerRadius="{DynamicResource CornerRadiusMedium}"
+   	                       BorderThickness="1"
+   	                       BorderBrush="{DynamicResource Border}"
+   	                       ItemsSource="{Binding Projects}"
+   	                       SelectedItem="{Binding SelectedProject, Mode=TwoWay}"
+   	                       HorizontalAlignment="Stretch"
+   	                       VerticalAlignment="Stretch">
                         <ListBox.ItemTemplate>
                             <DataTemplate DataType="models:Project">
-                                <Border Padding="8"
-                                        Margin="4"
-                                        CornerRadius="6"
-                                        Background="{DynamicResource Background}"
-                                        BorderBrush="{DynamicResource BorderBrush}"
-                                        BorderThickness="1">
-                                    <Grid ColumnDefinitions="*,Auto,Auto">
-                                        <StackPanel Grid.Column="0" Orientation="Vertical" VerticalAlignment="Center">
-                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
-                                            <TextBlock Text="{Binding ProjectCode}"
-                                                       FontStyle="Italic"
-                                                       FontSize="12" />
-                                        </StackPanel>
-                                        <Button Grid.Column="1"
-                                                Command="{Binding ((vm:MainWindowViewModel)DataContext).EditProjectCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
-                                                CommandParameter="{Binding}"
-                                                Background="Transparent"
-                                                BorderThickness="0"
-                                                Padding="4"
-                                                VerticalAlignment="Center"
-                                                ToolTip.Tip="Edit Project">
-                                            <TextBlock Text="✏️" />
-                                        </Button>
-                                        <Button Grid.Column="2"
-                                                Command="{Binding ((vm:MainWindowViewModel)DataContext).DeleteProjectCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
-                                                CommandParameter="{Binding}"
-                                                Background="Transparent"
-                                                BorderThickness="0"
-                                                Padding="4"
-                                                VerticalAlignment="Center"
-                                                ToolTip.Tip="Delete Project">
-                                            <TextBlock Text="❌" />
-                                        </Button>
-                                    </Grid>
-                                </Border>
+          	       <Border Padding="{DynamicResource SpacingBaseThickness}"
+   	                       Margin="{DynamicResource SpacingSmallThickness}"
+   	                       CornerRadius="{DynamicResource CornerRadiusSmall}"
+   	                       Background="{DynamicResource Surface}"
+   	                       BorderBrush="{DynamicResource Border2}"
+   	                       BorderThickness="1">
+   	                  <Grid ColumnDefinitions="*,Auto,Auto">
+   	                  <StackPanel Grid.Column="0" Orientation="Vertical" VerticalAlignment="Center">
+   	                  <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontFamily="{DynamicResource FontDisplay}" FontSize="{DynamicResource FontSizeMedium}" />
+   	                      <TextBlock Text="{Binding ProjectCode}"
+   	                     FontStyle="Italic"
+   	                     FontSize="{DynamicResource FontSizeSmall}"
+   	                     Foreground="{DynamicResource TextSecondary}" />
+   	                  </StackPanel>
+   	                  <Button Grid.Column="1"
+   	                  Command="{Binding ((vm:MainWindowViewModel)DataContext).EditProjectCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+   	                  CommandParameter="{Binding}"
+   	                  Background="Transparent"
+   	                  BorderThickness="0"
+   	                  Padding="4"
+   	                  VerticalAlignment="Center"
+   	                  ToolTip.Tip="Edit Project">
+   	              <TextBlock Text="✏️" />
+   	                  </Button>
+   	                  <Button Grid.Column="2"
+   	                  Command="{Binding ((vm:MainWindowViewModel)DataContext).DeleteProjectCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+   	                  CommandParameter="{Binding}"
+   	                  Background="Transparent"
+   	                  BorderThickness="0"
+   	                  Padding="4"
+   	                  VerticalAlignment="Center"
+   	                  ToolTip.Tip="Delete Project">
+   	              <TextBlock Text="❌" />
+   	                  </Button>
+   	              </Grid>
+      	    </Border>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
-                    
+
                     <!-- Task list area (right pane) -->
                     <Grid Grid.Column="1" Margin="12,0,0,0">
-                        <ListBox x:Name="TasksList" 
-                                 CornerRadius="6"
-                                 BorderThickness="1"
-                                 BorderBrush="{DynamicResource BorderBrush}"
-                                 ItemsSource="{Binding Tasks}"
-                                 HorizontalAlignment="Stretch"
-                                 VerticalAlignment="Stretch">
+                        <ListBox x:Name="TasksList"
+   	                 CornerRadius="{DynamicResource CornerRadiusMedium}"
+   	                 BorderThickness="1"
+   	                 BorderBrush="{DynamicResource Border}"
+   	                 ItemsSource="{Binding Tasks}"
+   	                 HorizontalAlignment="Stretch"
+   	                 VerticalAlignment="Stretch">
                             <ListBox.Styles>
-                                <Style Selector="ListBoxItem">
-                                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                                </Style>
+      	              <Style Selector="ListBoxItem">
+      	                  <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+      	              </Style>
                             </ListBox.Styles>
                             <ListBox.ItemTemplate>
-                                <DataTemplate DataType="vm:TaskItemViewModel">
-                                    <Expander Padding="0"
-                                              Margin="4"
-                                              HorizontalAlignment="Stretch"
-                                              HorizontalContentAlignment="Stretch"
-                                              CornerRadius="6"
-                                              Background="{DynamicResource Background}"
-                                              BorderBrush="{DynamicResource BorderBrush}"
-                                              BorderThickness="1"
-                                              IsExpanded="{Binding IsExpanded}">
-                                        <Expander.Header>
-                                            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto">
-                                                <CheckBox Grid.Column="0" IsChecked="{Binding IsCompleted}" Margin="0,0,12,0" VerticalAlignment="Center" />
-                                                <StackPanel Grid.Column="1" Orientation="Vertical" VerticalAlignment="Center">
-                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" 
-                                                               TextDecorations="{Binding IsCompleted, Converter={StaticResource BooleanToTextDecorationsConverter}}" />
-                                                    <TextBlock Text="{Binding Notes}"
-                                                               FontStyle="Italic"
-                                                               FontSize="12"
-                                                               IsVisible="{Binding Notes, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                                                </StackPanel>
-                                                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Spacing="4" Margin="0,0,12,0">
-                                                    <TextBlock Text="Total:" FontSize="12" Foreground="Gray" VerticalAlignment="Center"/>
-                                                    <TextBlock Text="{Binding TotalTime}" 
-                                                               VerticalAlignment="Center" 
-                                                               FontSize="12" 
-                                                               FontWeight="Bold"
-                                                               Foreground="Gray" />
-                                                </StackPanel>
-                                                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center" Spacing="4">
-                                                    <TextBlock Text="{Binding CurrentDuration}" 
-                                                               VerticalAlignment="Center" 
-                                                               FontSize="12" 
-                                                               Foreground="Gray" />
-                                                    <Button Command="{Binding ((vm:MainWindowViewModel)DataContext).ToggleTimerCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
-                                                            CommandParameter="{Binding}"
-                                                            Background="Transparent"
-                                                            BorderThickness="0"
-                                                            Padding="4"
-                                                            VerticalAlignment="Center"
-                                                            ToolTip.Tip="Start/Stop Timer">
-                                                        <TextBlock Text="⏱️" />
-                                                    </Button>
-                                                    <Button Command="{Binding ((vm:MainWindowViewModel)DataContext).ArchiveTaskCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
-                                                            CommandParameter="{Binding}"
-                                                            Background="Transparent"
-                                                            BorderThickness="0"
-                                                            Padding="4"
-                                                            VerticalAlignment="Center"
-                                                            ToolTip.Tip="Archive Task"
-                                                            IsVisible="{Binding IsArchived, Converter={StaticResource BooleanToVisibilityConverter}, ConverterParameter=Invert}">
-                                                        <TextBlock Text="📦" />
-                                                    </Button>
-                                                    <Button Command="{Binding ((vm:MainWindowViewModel)DataContext).UnarchiveTaskCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
-                                                            CommandParameter="{Binding}"
-                                                            Background="Transparent"
-                                                            BorderThickness="0"
-                                                            Padding="4"
-                                                            VerticalAlignment="Center"
-                                                            ToolTip.Tip="Unarchive Task"
-                                                            IsVisible="{Binding IsArchived, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                                        <TextBlock Text="📂" />
-                                                    </Button>
-                                                </StackPanel>
-                                                <Button Grid.Column="4" 
-                                                        Command="{Binding ((vm:MainWindowViewModel)DataContext).EditTaskCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
-                                                        CommandParameter="{Binding}"
-                                                        Background="Transparent"
-                                                        BorderThickness="0"
-                                                        Padding="4"
-                                                        VerticalAlignment="Center"
-                                                        ToolTip.Tip="Edit Task">
-                                                    <TextBlock Text="✏️" />
-                                                </Button>
-                                                <Button Grid.Column="5" 
-                                                        Command="{Binding ((vm:MainWindowViewModel)DataContext).DeleteTaskCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
-                                                        CommandParameter="{Binding}"
-                                                        Background="Transparent"
-                                                        BorderThickness="0"
-                                                        Padding="4"
-                                                        VerticalAlignment="Center"
-                                                        ToolTip.Tip="Delete Task">
-                                                    <TextBlock Text="❌" />
-                                                </Button>
-                                            </Grid>
-                                        </Expander.Header>
-                                        
-                                        <ListBox ItemsSource="{Binding TimeEntries}" Background="Transparent" BorderThickness="0" Margin="12,0,0,0">
-                                            <ListBox.Styles>
-                                                <Style Selector="ListBoxItem">
-                                                    <Setter Property="Padding" Value="4"/>
-                                                </Style>
-                                            </ListBox.Styles>
-                                            <ListBox.ItemTemplate>
-                                                <DataTemplate DataType="models:TimeEntry">
-                                                    <Grid ColumnDefinitions="*,Auto,Auto">
-                                                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Spacing="4">
-                                                            <TextBlock Text="{Binding StartTime, Converter={StaticResource UtcToLocalTimeConverter}, ConverterParameter='yyyy-MM-dd: HH:mm:ss'}" FontSize="12"/>
-                                                            <TextBlock Text="-" FontSize="12"/>
-                                                            <TextBlock Text="{Binding EndTime, Converter={StaticResource UtcToLocalTimeConverter}, ConverterParameter='HH:mm:ss'}" FontSize="12"/>
-                                                        </StackPanel>
-                                                        <TextBlock Grid.Column="1" Text="{Binding DurationSeconds, Converter={StaticResource SecondsToDurationConverter}}" VerticalAlignment="Center" FontSize="12" Margin="12,0" Foreground="Gray"/>
-                                                        <Button Grid.Column="2"
-                                                                Command="{Binding ((vm:MainWindowViewModel)DataContext).DeleteTimeEntryCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                                CommandParameter="{Binding}"
-                                                                Background="Transparent" BorderThickness="0" Padding="4"
-                                                                ToolTip.Tip="Delete Time Entry">
-                                                            <TextBlock Text="❌" FontSize="10"/>
-                                                        </Button>
-                                                    </Grid>
-                                                </DataTemplate>
-                                            </ListBox.ItemTemplate>
-                                        </ListBox>
-                                    </Expander>
-                                </DataTemplate>
+      	   	       <DataTemplate DataType="vm:TaskItemViewModel">
+                  <Expander Padding="0"
+                              Margin="{DynamicResource SpacingSmallThickness}"
+   	   	           HorizontalAlignment="Stretch"
+   	   	           HorizontalContentAlignment="Stretch"
+   	   	           CornerRadius="{DynamicResource CornerRadiusSmall}"
+   	   	           Background="{DynamicResource Surface}"
+   	   	           BorderBrush="{DynamicResource Border2}"
+   	   	           BorderThickness="1"
+   	   	           IsExpanded="{Binding IsExpanded}">
+      	            <Expander.Header>
+                                <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto,Auto">
+                                    <CheckBox Grid.Column="0" IsChecked="{Binding IsCompleted}" Margin="0,0,12,0" VerticalAlignment="Center" />
+                                    <StackPanel Grid.Column="1" Orientation="Vertical" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontFamily="{DynamicResource FontDisplay}" FontSize="{DynamicResource FontSizeMedium}"
+                                                   TextDecorations="{Binding IsCompleted, Converter={StaticResource BooleanToTextDecorationsConverter}}" />
+                                        <TextBlock Text="{Binding Notes}"
+                                                   FontStyle="Italic"
+                                                   FontSize="{DynamicResource FontSizeSmall}"
+                                                   Foreground="{DynamicResource TextSecondary}"
+                                                   IsVisible="{Binding Notes, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Spacing="{DynamicResource SpacingSmall}" Margin="0,0,12,0">
+                                        <TextBlock Text="Total:" FontSize="{DynamicResource FontSizeSmall}" Foreground="{DynamicResource TextTertiary}" VerticalAlignment="Center"/>
+                                        <TextBlock Text="{Binding TotalTime}"
+                                                   VerticalAlignment="Center"
+                                                   FontSize="{DynamicResource FontSizeSmall}"
+                                                   FontWeight="Bold"
+                                                   Foreground="{DynamicResource TextSecondary}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center" Spacing="{DynamicResource SpacingSmall}" Margin="0,0,12,0">
+                                        <TextBlock Text="{Binding CurrentDuration}"
+                                                   VerticalAlignment="Center"
+                                                   FontSize="{DynamicResource FontSizeSmall}"
+                                                   Foreground="{DynamicResource TealActive}"
+                                                   FontFamily="{DynamicResource FontMono}" />
+                                    </StackPanel>
+                                    <Button Grid.Column="4" Command="{Binding ((vm:MainWindowViewModel)DataContext).ToggleTimerCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                            CommandParameter="{Binding}"
+                                            Background="Transparent"
+                                            BorderThickness="0"
+                                            Padding="4"
+                                            VerticalAlignment="Center"
+                                            ToolTip.Tip="Start/Stop Timer">
+                                        <TextBlock Text="⏱️" />
+                                    </Button>
+                                    <Button Grid.Column="5" Command="{Binding ((vm:MainWindowViewModel)DataContext).ArchiveTaskCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                            CommandParameter="{Binding}"
+                                            Background="Transparent"
+                                            BorderThickness="0"
+                                            Padding="4"
+                                            VerticalAlignment="Center"
+                                            ToolTip.Tip="Archive Task"
+                                            IsVisible="{Binding IsArchived, Converter={StaticResource BooleanToVisibilityConverter}, ConverterParameter=Invert}">
+                                        <TextBlock Text="📦" />
+                                    </Button>
+                                    <Button Grid.Column="5" Command="{Binding ((vm:MainWindowViewModel)DataContext).UnarchiveTaskCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                            CommandParameter="{Binding}"
+                                            Background="Transparent"
+                                            BorderThickness="0"
+                                            Padding="4"
+                                            VerticalAlignment="Center"
+                                            ToolTip.Tip="Unarchive Task"
+                                            IsVisible="{Binding IsArchived, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <TextBlock Text="📂" />
+                                    </Button>
+                                    <Button Grid.Column="6"
+                                            Command="{Binding ((vm:MainWindowViewModel)DataContext).EditTaskCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                            CommandParameter="{Binding}"
+                                            Background="Transparent"
+                                            BorderThickness="0"
+                                            Padding="4"
+                                            VerticalAlignment="Center"
+                                            ToolTip.Tip="Edit Task">
+                                        <TextBlock Text="✏️" />
+                                    </Button>
+                                    <Button Grid.Column="7"
+                                            Command="{Binding ((vm:MainWindowViewModel)DataContext).DeleteTaskCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                            CommandParameter="{Binding}"
+                                            Background="Transparent"
+                                            BorderThickness="0"
+                                            Padding="4"
+                                            VerticalAlignment="Center"
+                                            ToolTip.Tip="Delete Task">
+                                        <TextBlock Text="❌" />
+                                    </Button>
+                                </Grid>
+   	              </Expander.Header>
+	               <ListBox ItemsSource="{Binding TimeEntries}" Background="Transparent" BorderThickness="0" Margin="12,0,0,0">
+   	              <ListBox.Styles>
+   	                  <Style Selector="ListBoxItem">
+                          <Setter Property="Padding" Value="{DynamicResource SpacingSmallThickness}"/>
+   	                  </Style>
+   	              </ListBox.Styles>
+   	              <ListBox.ItemTemplate>
+   	                  <DataTemplate DataType="models:TimeEntry">
+   	              <Grid ColumnDefinitions="*,Auto,Auto">
+   	              <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Spacing="{DynamicResource SpacingSmall}">
+   	                  <TextBlock Text="{Binding StartTime, Converter={StaticResource UtcToLocalTimeConverter}, ConverterParameter='yyyy-MM-dd: HH:mm:ss'}" FontSize="{DynamicResource FontSizeSmall}" FontFamily="{DynamicResource FontMono}"/>
+   	                  <TextBlock Text="-" FontSize="{DynamicResource FontSizeSmall}"/>
+   	                  <TextBlock Text="{Binding EndTime, Converter={StaticResource UtcToLocalTimeConverter}, ConverterParameter='HH:mm:ss'}" FontSize="{DynamicResource FontSizeSmall}" FontFamily="{DynamicResource FontMono}"/>
+   	              </StackPanel>
+   	              <TextBlock Grid.Column="1" Text="{Binding DurationSeconds, Converter={StaticResource SecondsToDurationConverter}}" VerticalAlignment="Center" FontSize="{DynamicResource FontSizeSmall}" Margin="12,0" Foreground="{DynamicResource TextTertiary}" FontFamily="{DynamicResource FontMono}"/>
+   	              <Button Grid.Column="2"
+   	                                  Command="{Binding ((vm:MainWindowViewModel)DataContext).DeleteTimeEntryCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+   	                                  CommandParameter="{Binding}"
+   	                                  Background="Transparent" BorderThickness="0" Padding="{DynamicResource SpacingSmallThickness}"
+   	                                  ToolTip.Tip="Delete Time Entry">
+   	                  <TextBlock Text="❌" FontSize="{DynamicResource FontSizeSmall}"/>
+   	              </Button>
+   	          </Grid>
+   	          </DataTemplate>
+   	      </ListBox.ItemTemplate>
+   	   </ListBox>
+        </Expander>
+      	    </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
 
                         <!-- Floating create task button at bottom-right (rounded, centered "+") -->
                         <Button Width="40" Height="40"
-                                HorizontalAlignment="Right" VerticalAlignment="Bottom"
-                                Margin="0,0,6,6"
-                                Command="{Binding CreateTaskCommand}"
-                                Padding="0"
-                                FontSize="20"
-                                FontWeight="Bold"
-                                HorizontalContentAlignment="Center"
-                                VerticalContentAlignment="Center"
-                                CornerRadius="20"
-                                Background="#2D8CFF"
-                                Foreground="White"
-                                BorderThickness="0"
-                                ToolTip.Tip="Create Task">+
+   	                    HorizontalAlignment="Right" VerticalAlignment="Bottom"
+   	                    Margin="0,0,6,6"
+   	                    Command="{Binding CreateTaskCommand}"
+   	                    Padding="0"
+   	                    FontSize="{DynamicResource FontSizeXLarge}"
+   	                    FontWeight="Bold"
+   	                    HorizontalContentAlignment="Center"
+   	                    VerticalContentAlignment="Center"
+   	                    CornerRadius="20"
+   	                    Background="{DynamicResource TealActive}"
+   	                    Foreground="White"
+   	                    BorderThickness="0"
+   	                    ToolTip.Tip="Create Task">+
                         </Button>
                     </Grid>
                 </Grid>
             </Grid>
         </TabItem>
-        
+
         <TabItem Header="Reports">
-            <Border Padding="20">
-                <StackPanel Spacing="20">
-                    <TextBlock Margin="0 5" xml:space="preserve">This feature will be implemented in a future release</TextBlock>
+            <Border Padding="{DynamicResource SpacingXXLargeThickness}">
+                <StackPanel Spacing="{DynamicResource SpacingXLarge}">
+                    <TextBlock Margin="0 5" xml:space="preserve" Foreground="{DynamicResource TextSecondary}">This feature will be implemented in a future release</TextBlock>
                 </StackPanel>
             </Border>
         </TabItem>

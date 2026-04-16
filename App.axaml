@@ -3,13 +3,22 @@
              x:Class="WorkLedger_Client.App"
              xmlns:local="using:WorkLedger_Client"
              RequestedThemeVariant="Default">
-             <!-- "Default" ThemeVariant follows system theme variant. "Dark" or "Light" are other available options. -->
+    <!-- System theme variant (Dark/Light based on system preference) -->
 
     <Application.DataTemplates>
         <local:ViewLocator/>
     </Application.DataTemplates>
-  
+
     <Application.Styles>
         <FluentTheme />
     </Application.Styles>
+
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- Initial theme for design time and startup -->
+                <ResourceInclude Source="avares://WorkLedger-Client/Assets/themes/DarkTheme.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
 </Application>

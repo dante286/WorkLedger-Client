@@ -81,7 +81,7 @@ namespace WorkLedger_Client.ViewModels
             LoadProjects();
         }
 
-        public MainWindowViewModel(LocalDbService localDbService, TimerService timerService, AppStateService appState)
+        public MainWindowViewModel(LocalDbService localDbService, TimerService timerService, AppStateService appState, ThemeService themeService)
         {
             _localDbService = localDbService;
             _timerService = timerService;

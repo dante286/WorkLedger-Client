@@ -8,6 +8,7 @@ using WorkLedger_Client.ViewModels;
 using WorkLedger_Client.Views;
 using WorkLedger_Client.Services;
 using System.IO;
+using Avalonia.Threading;
 
 namespace WorkLedger_Client
 {
@@ -22,7 +23,7 @@ namespace WorkLedger_Client
         {
             if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
             {
-                // Avoid duplicate validations from both Avalonia and the CommunityToolkit. 
+                // Avoid duplicate validations from both Avalonia and the CommunityToolkit.
                 // More info: https://docs.avaloniaui.net/docs/guides/development-guides/data-validation#manage-validationplugins
                 DisableAvaloniaDataAnnotationValidation();
 
@@ -33,10 +34,16 @@ namespace WorkLedger_Client
                 var appState = new AppStateService();
                 var timerService = new TimerService(localDb, appState);
 
+                // Initialize theme service with system detection
+                var themeService = new ThemeService(desktop);
+
                 desktop.MainWindow = new MainWindow
                 {
-                    DataContext = new MainWindowViewModel(localDb, timerService, appState),
+                    DataContext = new MainWindowViewModel(localDb, timerService, appState, themeService),
                 };
+
+                // Remove or replace the following line if ThemeService.DarkTheme does not exist
+                // this.Resources.Add(new Themes.DarkTheme());
             }
 
             base.OnFrameworkInitializationCompleted();

@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ResourceDictionary
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ══════════════════════════════════
+         DARK THEME COLOR TOKENS
+         ══════════════════════════════════ -->
+    
+    <!-- Slate Scale - Core Background & Surfaces -->
+    <Color x:Key="Slate950">#0a0d12</Color>
+    <Color x:Key="Slate900">#0f1318</Color>
+    <Color x:Key="Slate800">#161c26</Color>
+    <Color x:Key="Slate700">#1e2736</Color>
+    <Color x:Key="Slate600">#2c3a50</Color>
+    <Color x:Key="Slate500">#3d5166</Color>
+    <Color x:Key="Slate400">#5a7190</Color>
+    <Color x:Key="Slate300">#8ba3be</Color>
+    <Color x:Key="Slate200">#bdd0e3</Color>
+    <Color x:Key="Slate100">#dce8f2</Color>
+    <Color x:Key="Slate050">#f0f5fa</Color>
+    
+    <!-- Primary Colors -->
+    <Color x:Key="TealActive">#0d9488</Color>
+    <Color x:Key="TealGlow">#2dd4bf</Color>
+    <Color x:Key="TealDark">#0f766e</Color>
+    
+    <!-- Semantic Colors -->
+    <Color x:Key="AmberWarning">#fbbf24</Color>
+    <Color x:Key="AmberLight">#fcd34d</Color>
+    <Color x:Key="RedDanger">#f87171</Color>
+    
+    <!-- Component Aliases -->
+    <Color x:Key="Background">#0f1318</Color>
+    <Color x:Key="Surface">#161c26</Color>
+    <Color x:Key="Surface2">#1a2030</Color>
+    <Color x:Key="Border">#1e2736</Color>
+    <Color x:Key="Border2">#2c3a50</Color>
+    
+    <!-- Text Colors -->
+    <Color x:Key="TextPrimary">#dce8f2</Color>
+    <Color x:Key="TextSecondary">#8ba3be</Color>
+    <Color x:Key="TextTertiary">#5a7190</Color>
+    <Color x:Key="TextQuaternary">#3d5166</Color>
+    
+    <!-- Font Definitions -->
+    <FontFamily x:Key="FontDisplay">Manrope</FontFamily>
+    <FontFamily x:Key="FontBody">DM Sans</FontFamily>
+    <FontFamily x:Key="FontMono">DM Mono</FontFamily>
+    
+    <!-- Font Sizes (in device-independent units) -->
+    <x:Double x:Key="FontSizeSmall">11</x:Double>
+    <x:Double x:Key="FontSizeBase">12</x:Double>
+    <x:Double x:Key="FontSizeMedium">13</x:Double>
+    <x:Double x:Key="FontSizeLarge">16</x:Double>
+    <x:Double x:Key="FontSizeXLarge">20</x:Double>
+    <x:Double x:Key="FontSizeTitle">28</x:Double>
+    
+    <!-- Spacing Scale -->
+    <x:Double x:Key="SpacingSmall">4</x:Double>
+    <x:Double x:Key="SpacingBase">8</x:Double>
+    <x:Double x:Key="SpacingMedium">12</x:Double>
+    <x:Double x:Key="SpacingLarge">16</x:Double>
+    <x:Double x:Key="SpacingXLarge">24</x:Double>
+    <x:Double x:Key="SpacingXXLarge">32</x:Double>
+
+    <Thickness x:Key="SpacingSmallThickness">4</Thickness>
+    <Thickness x:Key="SpacingBaseThickness">8</Thickness>
+    <Thickness x:Key="SpacingMediumThickness">12</Thickness>
+    <Thickness x:Key="SpacingLargeThickness">16</Thickness>
+    <Thickness x:Key="SpacingXLargeThickness">24</Thickness>
+    <Thickness x:Key="SpacingXXLargeThickness">32</Thickness>
+    
+    <!-- Border Radius -->
+    <CornerRadius x:Key="CornerRadiusSmall">4</CornerRadius>
+    <CornerRadius x:Key="CornerRadiusMedium">7</CornerRadius>
+    <CornerRadius x:Key="CornerRadiusLarge">10</CornerRadius>
+    <CornerRadius x:Key="CornerRadiusXLarge">12</CornerRadius>
+
+</ResourceDictionary>

@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WorkLedger — Brand System</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Manrope:wght@400;500;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --slate-950: #0a0d12;
+    --slate-900: #0f1318;
+    --slate-800: #161c26;
+    --slate-700: #1e2736;
+    --slate-600: #2c3a50;
+    --slate-500: #3d5166;
+    --slate-400: #5a7190;
+    --slate-300: #8ba3be;
+    --slate-200: #bdd0e3;
+    --slate-100: #dce8f2;
+    --slate-050: #f0f5fa;
+
+    --ink-950: #0e1117;
+    --ink-100: #f4f6f9;
+    --ink-200: #e2e8f0;
+
+    --teal-500: #0d9488;
+    --teal-400: #14b8a8;
+    --teal-300: #2dd4bf;
+    --teal-200: #99f6e4;
+    --teal-600: #0f766e;
+
+    --amber-400: #fbbf24;
+    --amber-300: #fcd34d;
+
+    --red-400: #f87171;
+
+    --font-display: 'Manrope', sans-serif;
+    --font-mono: 'DM Mono', monospace;
+    --font-body: 'DM Sans', sans-serif;
+  }
+
+  body {
+    background: #0f1318;
+    color: #dce8f2;
+    font-family: var(--font-body);
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+
+  /* ---- Layout ---- */
+  .page { max-width: 1100px; margin: 0 auto; padding: 60px 32px 120px; }
+
+  section { margin-bottom: 80px; }
+
+  .section-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--teal-400);
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--slate-700);
+  }
+
+  h2 {
+    font-family: var(--font-display);
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--slate-100);
+    margin-bottom: 8px;
+  }
+
+  p.desc {
+    color: var(--slate-300);
+    font-size: 14px;
+    max-width: 600px;
+    margin-bottom: 32px;
+    line-height: 1.7;
+  }
+
+  /* ---- Hero ---- */
+  .hero {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 48px;
+    padding: 64px 0 80px;
+    border-bottom: 1px solid var(--slate-700);
+    margin-bottom: 80px;
+  }
+
+  .hero-text { flex: 1; }
+
+  .brand-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--teal-400);
+    margin-bottom: 16px;
+  }
+
+  .brand-name {
+    font-family: var(--font-display);
+    font-size: clamp(48px, 6vw, 72px);
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    color: var(--slate-050);
+  }
+
+  .brand-name span { color: var(--teal-400); }
+
+  .brand-tagline {
+    margin-top: 16px;
+    font-size: 15px;
+    color: var(--slate-300);
+    font-weight: 300;
+    letter-spacing: 0.02em;
+  }
+
+  /* ---- Logo Lockup ---- */
+  .logo-showcase {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+
+  .logo-card {
+    border-radius: 12px;
+    padding: 28px 32px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    border: 1px solid var(--slate-700);
+  }
+
+  .logo-card.dark-bg { background: var(--slate-800); }
+  .logo-card.light-bg { background: var(--slate-050); }
+
+  .logo-mark {
+    width: 40px;
+    height: 40px;
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .logo-wordmark {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 22px;
+    letter-spacing: -0.01em;
+  }
+
+  .logo-card.dark-bg .logo-wordmark { color: var(--slate-050); }
+  .logo-card.light-bg .logo-wordmark { color: var(--ink-950); }
+
+  .logo-wordmark span { color: var(--teal-400); }
+  .logo-card.light-bg .logo-wordmark span { color: var(--teal-600); }
+
+  /* ---- Color Palettes ---- */
+  .palette-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 32px;
+  }
+
+  .palette-group { }
+  .palette-group-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--slate-400);
+    margin-bottom: 12px;
+  }
+
+  .swatch-row { display: flex; border-radius: 8px; overflow: hidden; height: 56px; }
+  .swatch {
+    flex: 1;
+    position: relative;
+    cursor: default;
+    transition: flex 0.2s ease;
+  }
+  .swatch:hover { flex: 2; }
+  .swatch-label {
+    position: absolute;
+    bottom: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity 0.15s;
+    background: rgba(0,0,0,0.5);
+    padding: 2px 5px;
+    border-radius: 3px;
+  }
+  .swatch:hover .swatch-label { opacity: 1; }
+
+  .color-cards { display: flex; flex-direction: column; gap: 12px; }
+  .color-card {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 16px;
+    background: var(--slate-800);
+    border: 1px solid var(--slate-700);
+    border-radius: 8px;
+  }
+  .color-dot {
+    width: 36px;
+    height: 36px;
+    border-radius: 6px;
+    flex-shrink: 0;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .color-info { flex: 1; }
+  .color-name {
+    font-family: var(--font-display);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--slate-100);
+    margin-bottom: 2px;
+  }
+  .color-role {
+    font-size: 12px;
+    color: var(--slate-400);
+    margin-bottom: 4px;
+  }
+  .color-values {
+    display: flex;
+    gap: 12px;
+  }
+  .color-hex, .color-hsl {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--slate-400);
+    background: var(--slate-700);
+    padding: 2px 7px;
+    border-radius: 4px;
+  }
+
+  /* ---- Icons ---- */
+  .icons-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 16px;
+  }
+
+  .icon-card {
+    background: var(--slate-800);
+    border: 1px solid var(--slate-700);
+    border-radius: 12px;
+    padding: 20px 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .icon-card:hover {
+    border-color: var(--teal-500);
+    background: var(--slate-700);
+  }
+
+  .icon-card svg { display: block; }
+
+  .icon-name {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--slate-400);
+    text-align: center;
+    letter-spacing: 0.05em;
+  }
+
+  /* ---- Typography ---- */
+  .type-samples { display: flex; flex-direction: column; gap: 24px; }
+  .type-row {
+    padding: 24px;
+    background: var(--slate-800);
+    border: 1px solid var(--slate-700);
+    border-radius: 10px;
+    display: flex;
+    align-items: baseline;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  .type-meta {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--slate-500);
+    min-width: 110px;
+    line-height: 1.5;
+  }
+  .type-meta strong { display: block; color: var(--slate-400); font-size: 11px; }
+
+  /* ---- Theme Preview ---- */
+  .theme-preview-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+
+  .theme-card {
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid var(--slate-700);
+  }
+
+  .theme-titlebar {
+    height: 36px;
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    gap: 7px;
+  }
+  .titlebar-dot { width: 11px; height: 11px; border-radius: 50%; }
+
+  .theme-body { padding: 20px; }
+
+  .theme-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid;
+  }
+
+  /* Dark theme */
+  .t-dark .theme-titlebar { background: #161c26; }
+  .t-dark .theme-body { background: #0f1318; }
+  .t-dark .theme-label { color: #5a7190; border-color: #1e2736; }
+
+  /* Light theme */
+  .t-light .theme-titlebar { background: #e8edf4; }
+  .t-light .theme-body { background: #f4f6f9; }
+  .t-light .theme-label { color: #5a7190; border-color: #dce8f2; }
+
+  .mock-project-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    margin-bottom: 6px;
+    font-family: var(--font-body);
+    font-size: 13px;
+  }
+
+  .t-dark .mock-project-row { background: #161c26; color: #bdd0e3; }
+  .t-light .mock-project-row { background: #ffffff; color: #1e2736; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+
+  .mock-project-row.active-dark { background: rgba(13,148,136,0.12); color: #2dd4bf; }
+  .mock-project-row.active-light { background: rgba(13,148,136,0.08); color: #0f766e; }
+
+  .mock-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .mock-time {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    opacity: 0.7;
+  }
+  .mock-badge {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .badge-running-dark { background: rgba(13,148,136,0.2); color: #14b8a8; }
+  .badge-running-light { background: rgba(13,148,136,0.12); color: #0f766e; }
+
+  /* ---- Spacing / Motion note ---- */
+  .spec-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 16px;
+  }
+
+  .spec-card {
+    background: var(--slate-800);
+    border: 1px solid var(--slate-700);
+    border-radius: 10px;
+    padding: 18px;
+  }
+  .spec-card-title {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--teal-400);
+    margin-bottom: 10px;
+  }
+  .spec-card-body {
+    font-size: 13px;
+    color: var(--slate-300);
+    line-height: 1.6;
+  }
+  .spec-card-body code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--slate-200);
+    background: var(--slate-700);
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
+
+  @media (max-width: 640px) {
+    .hero { flex-direction: column; }
+    .theme-preview-grid { grid-template-columns: 1fr; }
+    .logo-showcase { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="hero-text">
+      <div class="brand-eyebrow">Brand Identity System · v1.0</div>
+      <div class="brand-name">Work<span>Ledger</span></div>
+      <div class="brand-tagline">Time tracking for professionals. Precise. Offline-first. Yours.</div>
+    </div>
+  </div>
+
+  <!-- LOGO LOCKUP -->
+  <section>
+    <div class="section-label">01 — Logo &amp; Wordmark</div>
+    <h2>Logo Lockup</h2>
+    <p class="desc">The WorkLedger wordmark pairs a bold display typeface with a subtle ledger-tick icon — a minimal mark that references both the ledger/accounting context and a running timer. The "W" lettermark works as an app icon at small sizes.</p>
+
+    <div class="logo-showcase">
+      <!-- Dark variant -->
+      <div class="logo-card dark-bg">
+        <div class="logo-mark">
+          <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect width="40" height="40" rx="10" fill="#0d9488" fill-opacity="0.15"/>
+            <rect x="1" y="1" width="38" height="38" rx="9" stroke="#0d9488" stroke-width="1.5" stroke-opacity="0.4"/>
+            <!-- ledger lines -->
+            <line x1="10" y1="14" x2="30" y2="14" stroke="#5a7190" stroke-width="1.2" stroke-linecap="round"/>
+            <line x1="10" y1="20" x2="30" y2="20" stroke="#5a7190" stroke-width="1.2" stroke-linecap="round"/>
+            <line x1="10" y1="26" x2="30" y2="26" stroke="#5a7190" stroke-width="1.2" stroke-linecap="round"/>
+            <!-- active tick on middle line -->
+            <line x1="10" y1="20" x2="22" y2="20" stroke="#0d9488" stroke-width="2" stroke-linecap="round"/>
+            <!-- timer dot -->
+            <circle cx="24" cy="20" r="3" fill="#0d9488"/>
+            <circle cx="24" cy="20" r="1.5" fill="#2dd4bf"/>
+          </svg>
+        </div>
+        <div class="logo-wordmark">Work<span>Ledger</span></div>
+      </div>
+
+      <!-- Light variant -->
+      <div class="logo-card light-bg">
+        <div class="logo-mark">
+          <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect width="40" height="40" rx="10" fill="#0d9488" fill-opacity="0.10"/>
+            <rect x="1" y="1" width="38" height="38" rx="9" stroke="#0d9488" stroke-width="1.5" stroke-opacity="0.3"/>
+            <line x1="10" y1="14" x2="30" y2="14" stroke="#8ba3be" stroke-width="1.2" stroke-linecap="round"/>
+            <line x1="10" y1="20" x2="30" y2="20" stroke="#8ba3be" stroke-width="1.2" stroke-linecap="round"/>
+            <line x1="10" y1="26" x2="30" y2="26" stroke="#8ba3be" stroke-width="1.2" stroke-linecap="round"/>
+            <line x1="10" y1="20" x2="22" y2="20" stroke="#0f766e" stroke-width="2" stroke-linecap="round"/>
+            <circle cx="24" cy="20" r="3" fill="#0f766e"/>
+            <circle cx="24" cy="20" r="1.5" fill="#0d9488"/>
+          </svg>
+        </div>
+        <div class="logo-wordmark" style="color: #0e1117">Work<span>Ledger</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- COLOR SYSTEM -->
+  <section>
+    <div class="section-label">02 — Color System</div>
+    <h2>Color Palette</h2>
+    <p class="desc">Built around a cool slate-navy foundation with teal as the single functional accent. Teal signals activity, timers, and CTAs — never decorative. Amber is reserved exclusively for warnings (timer conflicts, sync errors). Red for destructive actions only.</p>
+
+    <div class="color-cards" style="margin-bottom: 32px;">
+
+      <div class="color-card">
+        <div class="color-dot" style="background: #0d9488;"></div>
+        <div class="color-info">
+          <div class="color-name">Teal Active</div>
+          <div class="color-role">Primary accent · Running timers · CTAs · Links · Focus states</div>
+          <div class="color-values">
+            <span class="color-hex">#0D9488</span>
+            <span class="color-hsl">hsl(174, 76%, 32%)</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="color-card">
+        <div class="color-dot" style="background: #2dd4bf;"></div>
+        <div class="color-info">
+          <div class="color-name">Teal Glow</div>
+          <div class="color-role">Timer pulse animation · Active state highlights · Hover accents</div>
+          <div class="color-values">
+            <span class="color-hex">#2DD4BF</span>
+            <span class="color-hsl">hsl(174, 62%, 50%)</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="color-card">
+        <div class="color-dot" style="background: #0f1318; border: 1px solid #2c3a50;"></div>
+        <div class="color-info">
+          <div class="color-name">Ink Deep</div>
+          <div class="color-role">Dark theme app background · Window chrome</div>
+          <div class="color-values">
+            <span class="color-hex">#0F1318</span>
+            <span class="color-hsl">hsl(216, 27%, 8%)</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="color-card">
+        <div class="color-dot" style="background: #161c26; border: 1px solid #2c3a50;"></div>
+        <div class="color-info">
+          <div class="color-name">Slate Surface</div>
+          <div class="color-role">Dark theme cards · Sidebar · Panel backgrounds</div>
+          <div class="color-values">
+            <span class="color-hex">#161C26</span>
+            <span class="color-hsl">hsl(216, 24%, 12%)</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="color-card">
+        <div class="color-dot" style="background: #f4f6f9; border: 1px solid #dce8f2;"></div>
+        <div class="color-info">
+          <div class="color-name">Ghost White</div>
+          <div class="color-role">Light theme app background · Near-white with slight blue cast</div>
+          <div class="color-values">
+            <span class="color-hex">#F4F6F9</span>
+            <span class="color-hsl">hsl(216, 25%, 97%)</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="color-card">
+        <div class="color-dot" style="background: #fbbf24;"></div>
+        <div class="color-info">
+          <div class="color-name">Amber Warning</div>
+          <div class="color-role">Sync conflict · Unsaved state · Timer already running</div>
+          <div class="color-values">
+            <span class="color-hex">#FBBF24</span>
+            <span class="color-hsl">hsl(43, 96%, 56%)</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="color-card">
+        <div class="color-dot" style="background: #f87171;"></div>
+        <div class="color-info">
+          <div class="color-name">Red Destructive</div>
+          <div class="color-role">Delete actions · Error states · Stop confirmation</div>
+          <div class="color-values">
+            <span class="color-hex">#F87171</span>
+            <span class="color-hsl">hsl(0, 91%, 71%)</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Slate scale -->
+    <div class="palette-group">
+      <div class="palette-group-label">Slate Scale — Full Range</div>
+      <div class="swatch-row">
+        <div class="swatch" style="background:#0a0d12"><span class="swatch-label">#0A0D12</span></div>
+        <div class="swatch" style="background:#0f1318"><span class="swatch-label">#0F1318</span></div>
+        <div class="swatch" style="background:#161c26"><span class="swatch-label">#161C26</span></div>
+        <div class="swatch" style="background:#1e2736"><span class="swatch-label">#1E2736</span></div>
+        <div class="swatch" style="background:#2c3a50"><span class="swatch-label">#2C3A50</span></div>
+        <div class="swatch" style="background:#3d5166"><span class="swatch-label">#3D5166</span></div>
+        <div class="swatch" style="background:#5a7190"><span class="swatch-label">#5A7190</span></div>
+        <div class="swatch" style="background:#8ba3be"><span class="swatch-label">#8BA3BE</span></div>
+        <div class="swatch" style="background:#bdd0e3"><span class="swatch-label">#BDD0E3</span></div>
+        <div class="swatch" style="background:#dce8f2"><span class="swatch-label">#DCE8F2</span></div>
+        <div class="swatch" style="background:#f0f5fa"><span class="swatch-label">#F0F5FA</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ICONS -->
+  <section>
+    <div class="section-label">03 — Iconography</div>
+    <h2>UI Icons</h2>
+    <p class="desc">20×20 grid, 1.5px stroke, rounded linecaps. Icons are always monochrome — teal only for active/running states. Use Lucide Icons as the base library for consistency and cross-platform rendering.</p>
+
+    <div class="icons-grid">
+
+      <!-- Timer/Play -->
+      <div class="icon-card">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0d9488" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="9"/>
+          <polyline points="12 7 12 12 15 15"/>
+        </svg>
+        <div class="icon-name">timer</div>
+      </div>
+
+      <!-- Play -->
+      <div class="icon-card">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#8ba3be" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="5 3 19 12 5 21 5 3"/>
+        </svg>
+        <div class="icon-name">start</div>
+      </div>
+
+      <!-- Pause -->
+      <div class="icon-card">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#8ba3be" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="6" y="4" width="4" height="16" rx="1"/>
+          <rect x="14" y="4" width="4" height="16" rx="1"/>
+        </svg>
+        <div class="icon-name">pause</div>
+      </div>
+
+      <!-- Stop -->
+      <div class="icon-card">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#8ba3be" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="4" width="16" height="16" rx="2"/>
+        </svg>
+        <div class="icon-name">stop</div>
+      </div>
+
+      <!-- Project -->
+      <div class="icon-card">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#8ba3be" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 7a2 2 0 0 1 2-2h3l2 2h9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+        </svg>
+        <div class="icon-name">project</div>
+      </div>
+
+      <!-- Task -->
+      <div class="icon-card">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#8ba3be" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="9 11 12 14 22 4"/>
+          <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+        </svg>
+        <div class="icon-name">task</div>
+      </div>
+
+      <!-- Report -->
+      <div class="icon-card">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#8ba3be" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="20" x2="18" y2="10"/>
+          <line x1="12" y1="20" x2="12" y2="4"/>
+          <line x1="6" y1="20" x2="6" y2="14"/>
+          <line x1="2" y1="20" x2="22" y2="20"/>
+        </svg>
+        <div class="icon-name">reports</div>
+      </div>
+
+      <!-- Sync -->
+      <div class="icon-card">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#8ba3be" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="23 4 23 10 17 10"/>
+          <polyline points="1 20 1 14 7 14"/>
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+        </svg>
+        <div class="icon-name">sync</div>
+      </div>
+
+      <!-- Settings -->
+      <div class="icon-card">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#8ba3be" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+        <div class="icon-name">settings</div>
+      </div>
+
+      <!-- Add -->
+      <div class="icon-card">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#8ba3be" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="9"/>
+          <line x1="12" y1="8" x2="12" y2="16"/>
+          <line x1="8" y1="12" x2="16" y2="12"/>
+        </svg>
+        <div class="icon-name">add</div>
+      </div>
+
+      <!-- Archive -->
+      <div class="icon-card">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#8ba3be" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="21 8 21 21 3 21 3 8"/>
+          <rect x="1" y="3" width="22" height="5" rx="1"/>
+          <line x1="10" y1="12" x2="14" y2="12"/>
+        </svg>
+        <div class="icon-name">archive</div>
+      </div>
+
+      <!-- Offline -->
+      <div class="icon-card">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#8ba3be" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="1" y1="1" x2="23" y2="23"/>
+          <path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/>
+          <path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/>
+          <path d="M10.71 5.05A16 16 0 0 1 22.56 9"/>
+          <path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/>
+          <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
+          <circle cx="12" cy="20" r="1" fill="#8ba3be"/>
+        </svg>
+        <div class="icon-name">offline</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TYPOGRAPHY -->
+  <section>
+    <div class="section-label">04 — Typography</div>
+    <h2>Type Scale</h2>
+    <p class="desc">Three typefaces with distinct roles. Manrope for headings and the wordmark — geometric, confident. DM Sans for UI body text — clean and readable at small sizes. DM Mono for all time values, hex codes, and data — monospaced to prevent layout shift as numbers update.</p>
+
+    <div class="type-samples">
+      <div class="type-row">
+        <div class="type-meta"><strong>Manrope 800</strong>36px · Headings</div>
+        <div style="font-family: 'Manrope'; font-weight: 800; font-size: 36px; color: #dce8f2; letter-spacing: -0.02em;">WorkLedger</div>
+      </div>
+      <div class="type-row">
+        <div class="type-meta"><strong>Manrope 600</strong>20px · Section titles</div>
+        <div style="font-family: 'Manrope'; font-weight: 600; font-size: 20px; color: #dce8f2;">Active Projects</div>
+      </div>
+      <div class="type-row">
+        <div class="type-meta"><strong>DM Sans 400</strong>14px · Body / UI</div>
+        <div style="font-family: 'DM Sans'; font-size: 14px; color: #bdd0e3;">Design the homepage hero section and review copy with the client before Thursday's deadline.</div>
+      </div>
+      <div class="type-row">
+        <div class="type-meta"><strong>DM Sans 300</strong>12px · Meta / Labels</div>
+        <div style="font-family: 'DM Sans'; font-weight: 300; font-size: 12px; color: #5a7190; letter-spacing: 0.02em;">Last updated · 3 tasks · Created Jan 14 2025</div>
+      </div>
+      <div class="type-row">
+        <div class="type-meta"><strong>DM Mono 500</strong>18px · Timer display</div>
+        <div style="font-family: 'DM Mono'; font-weight: 500; font-size: 28px; color: #0d9488; letter-spacing: 0.02em;">02:47:33</div>
+      </div>
+      <div class="type-row">
+        <div class="type-meta"><strong>DM Mono 400</strong>12px · Data / Badges</div>
+        <div style="font-family: 'DM Mono'; font-size: 12px; color: #5a7190; letter-spacing: 0.08em; text-transform: uppercase;">RUNNING · 14.5h this week</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- THEME PREVIEW -->
+  <section>
+    <div class="section-label">05 — Theme Preview</div>
+    <h2>Light &amp; Dark</h2>
+    <p class="desc">Both themes share identical information hierarchy and spacing. The only color changes are surface backgrounds and text values — the teal accent and semantic colors remain constant across both modes.</p>
+
+    <div class="theme-preview-grid">
+
+      <!-- Dark -->
+      <div class="theme-card">
+        <div class="theme-titlebar" style="background:#161c26;">
+          <div class="titlebar-dot" style="background:#f87171; opacity:.7;"></div>
+          <div class="titlebar-dot" style="background:#fbbf24; opacity:.7;"></div>
+          <div class="titlebar-dot" style="background:#4ade80; opacity:.7;"></div>
+        </div>
+        <div class="theme-body t-dark" style="background:#0f1318; padding: 20px;">
+          <div class="theme-label" style="font-family: 'DM Mono'; font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase; color: #5a7190; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid #1e2736;">Dark Mode</div>
+          <div class="mock-project-row active-dark" style="background: rgba(13,148,136,0.12);">
+            <div class="mock-dot" style="background:#0d9488;"></div>
+            <span style="font-size:13px;color:#2dd4bf;font-family:'DM Sans';">Homepage Redesign</span>
+            <span class="mock-badge badge-running-dark" style="font-family:'DM Mono';font-size:9px;padding:2px 7px;border-radius:4px;letter-spacing:.05em;text-transform:uppercase;background:rgba(13,148,136,0.2);color:#14b8a8;margin-left:8px;">RUNNING</span>
+            <span class="mock-time" style="font-family:'DM Mono';font-size:12px;color:#0d9488;margin-left:auto;">02:47:33</span>
+          </div>
+          <div class="mock-project-row" style="background:#161c26;">
+            <div class="mock-dot" style="background:#3d5166;"></div>
+            <span style="font-size:13px;color:#8ba3be;font-family:'DM Sans';">API Integration</span>
+            <span class="mock-time" style="font-family:'DM Mono';font-size:12px;color:#3d5166;margin-left:auto;">07:12:00</span>
+          </div>
+          <div class="mock-project-row" style="background:#161c26;">
+            <div class="mock-dot" style="background:#3d5166;"></div>
+            <span style="font-size:13px;color:#8ba3be;font-family:'DM Sans';">Client Onboarding</span>
+            <span class="mock-time" style="font-family:'DM Mono';font-size:12px;color:#3d5166;margin-left:auto;">01:30:15</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Light -->
+      <div class="theme-card" style="border-color:#dce8f2;">
+        <div class="theme-titlebar" style="background:#e8edf4;">
+          <div class="titlebar-dot" style="background:#f87171; opacity:.7;"></div>
+          <div class="titlebar-dot" style="background:#fbbf24; opacity:.7;"></div>
+          <div class="titlebar-dot" style="background:#4ade80; opacity:.7;"></div>
+        </div>
+        <div style="background:#f4f6f9; padding: 20px;">
+          <div style="font-family:'DM Mono';font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:#8ba3be;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid #dce8f2;">Light Mode</div>
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;margin-bottom:6px;background:rgba(13,148,136,0.07);border: 1px solid rgba(13,148,136,0.15);">
+            <div style="width:8px;height:8px;border-radius:50%;background:#0d9488;flex-shrink:0;"></div>
+            <span style="font-size:13px;color:#0f766e;font-family:'DM Sans';">Homepage Redesign</span>
+            <span style="font-family:'DM Mono';font-size:9px;padding:2px 7px;border-radius:4px;letter-spacing:.05em;text-transform:uppercase;background:rgba(13,148,136,0.12);color:#0f766e;margin-left:8px;">RUNNING</span>
+            <span style="font-family:'DM Mono';font-size:12px;color:#0d9488;margin-left:auto;">02:47:33</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;margin-bottom:6px;background:#ffffff;box-shadow:0 1px 3px rgba(0,0,0,0.06);">
+            <div style="width:8px;height:8px;border-radius:50%;background:#8ba3be;flex-shrink:0;"></div>
+            <span style="font-size:13px;color:#1e2736;font-family:'DM Sans';">API Integration</span>
+            <span style="font-family:'DM Mono';font-size:12px;color:#8ba3be;margin-left:auto;">07:12:00</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;margin-bottom:6px;background:#ffffff;box-shadow:0 1px 3px rgba(0,0,0,0.06);">
+            <div style="width:8px;height:8px;border-radius:50%;background:#8ba3be;flex-shrink:0;"></div>
+            <span style="font-size:13px;color:#1e2736;font-family:'DM Sans';">Client Onboarding</span>
+            <span style="font-family:'DM Mono';font-size:12px;color:#8ba3be;margin-left:auto;">01:30:15</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DESIGN SPECS -->
+  <section>
+    <div class="section-label">06 — Design Tokens &amp; Specs</div>
+    <h2>Implementation Notes</h2>
+    <p class="desc">Key decisions to carry into your Tauri / Electron build.</p>
+
+    <div class="spec-grid">
+      <div class="spec-card">
+        <div class="spec-card-title">Border Radius</div>
+        <div class="spec-card-body">
+          Cards: <code>10px</code><br>
+          Buttons: <code>7px</code><br>
+          Badges: <code>4px</code><br>
+          App icon: <code>22%</code> of size
+        </div>
+      </div>
+      <div class="spec-card">
+        <div class="spec-card-title">Spacing Scale</div>
+        <div class="spec-card-body">
+          Base unit: <code>4px</code><br>
+          Gutters: <code>16px</code><br>
+          Section gap: <code>32px</code><br>
+          Panel padding: <code>20px</code>
+        </div>
+      </div>
+      <div class="spec-card">
+        <div class="spec-card-title">Timer Display</div>
+        <div class="spec-card-body">
+          Font: <code>DM Mono 500</code><br>
+          Pulsing dot for active state<br>
+          Teal color only when running<br>
+          Muted slate when paused
+        </div>
+      </div>
+      <div class="spec-card">
+        <div class="spec-card-title">Motion</div>
+        <div class="spec-card-body">
+          Transitions: <code>150ms ease</code><br>
+          Timer pulse: <code>2s ease-in-out</code><br>
+          Panel slide: <code>200ms ease-out</code><br>
+          No animation if reduced-motion
+        </div>
+      </div>
+      <div class="spec-card">
+        <div class="spec-card-title">System Theme</div>
+        <div class="spec-card-body">
+          Detect via <code>prefers-color-scheme</code><br>
+          CSS custom properties swap<br>
+          No flash on load<br>
+          Manual override in settings
+        </div>
+      </div>
+      <div class="spec-card">
+        <div class="spec-card-title">Icon System</div>
+        <div class="spec-card-body">
+          Base: Lucide Icons<br>
+          Size: <code>18px</code> nav / <code>20px</code> content<br>
+          Stroke: <code>1.5px</code><br>
+          Active: teal · Default: slate-400
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+</body>
+</html>
