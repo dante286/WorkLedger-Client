@@ -41,9 +41,6 @@ namespace WorkLedger_Client
                 {
                     DataContext = new MainWindowViewModel(localDb, timerService, appState, themeService),
                 };
-
-                // Remove or replace the following line if ThemeService.DarkTheme does not exist
-                // this.Resources.Add(new Themes.DarkTheme());
             }
 
             base.OnFrameworkInitializationCompleted();

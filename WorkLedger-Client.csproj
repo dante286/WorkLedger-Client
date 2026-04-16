@@ -45,5 +45,6 @@
 
   <ItemGroup>
     <AvaloniaResource Include="Assets\themes\*.xaml" />
+    <AvaloniaResource Include="Assets\fonts\*.ttf" />
   </ItemGroup>
 </Project>

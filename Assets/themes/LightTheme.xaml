@@ -49,9 +49,9 @@
     <Color x:Key="TextQuaternary">#8ba3be</Color>
     
     <!-- Font Definitions -->
-    <FontFamily x:Key="FontDisplay">Manrope</FontFamily>
-    <FontFamily x:Key="FontBody">DM Sans</FontFamily>
-    <FontFamily x:Key="FontMono">DM Mono</FontFamily>
+    <FontFamily x:Key="FontDisplay">avares://WorkLedger-Client/Assets/fonts#Manrope</FontFamily>
+    <FontFamily x:Key="FontBody">avares://WorkLedger-Client/Assets/fonts#DM Sans</FontFamily>
+    <FontFamily x:Key="FontMono">avares://WorkLedger-Client/Assets/fonts#DM Mono</FontFamily>
     
     <!-- Font Sizes (in device-independent units) -->
     <x:Double x:Key="FontSizeSmall">11</x:Double>

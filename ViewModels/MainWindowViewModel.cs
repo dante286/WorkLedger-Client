@@ -101,14 +101,43 @@ namespace WorkLedger_Client.ViewModels
             return false;
         }
 
+        [ObservableProperty]
+        private int? _activeTaskId;
+
+        [ObservableProperty]
+        private int? _activeProjectId;
+
+        [ObservableProperty]
+        private string _activeProjectName = string.Empty;
+
+        [ObservableProperty]
+        private string _activeTimerValue = "00:00:00";
+
+        [ObservableProperty]
+        private string _weeklyTotal = "00:00:00";
+
+        [ObservableProperty]
+        private int _taskCount;
+
         private void OnTimerTick(TimeSpan elapsed)
         {
-            if (_appState.ActiveTask == null) return;
+            ActiveTimerValue = elapsed.ToString(@"hh\:mm\:ss");
+            
+            if (_appState.ActiveTask == null)
+            {
+                ActiveTaskId = null;
+                ActiveProjectId = null;
+                return;
+            }
+
+            ActiveTaskId = _appState.ActiveTask.Id;
+            ActiveProjectId = _appState.ActiveTask.ProjectId;
+            ActiveProjectName = Projects.FirstOrDefault(p => p.Id == ActiveProjectId.Value)?.Name ?? string.Empty;
 
             var activeTaskVm = Tasks.FirstOrDefault(t => t.Id == _appState.ActiveTask.Id);
             if (activeTaskVm != null)
             {
-                activeTaskVm.CurrentDuration = elapsed.ToString(@"hh\:mm\:ss");
+                activeTaskVm.CurrentDuration = ActiveTimerValue;
             }
         }
 
@@ -124,10 +153,22 @@ namespace WorkLedger_Client.ViewModels
 
         public async Task LoadTasksAsync()
         {
-            if (SelectedProject == null) return;
+            if (SelectedProject == null)
+            {
+                Tasks.Clear();
+                TaskCount = 0;
+                WeeklyTotal = "00:00:00";
+                return;
+            }
 
             var tasks = await _localDbService.GetTasksByProjectIdAsync(SelectedProject.Id);
             Tasks.Clear();
+            TaskCount = tasks.Count;
+            
+            // Calculate weekly total
+            long weeklySeconds = 0;
+            var weekStart = DateTime.UtcNow.Date.AddDays(-(int)DateTime.UtcNow.DayOfWeek);
+            
             foreach (var task in tasks)
             {
                 // Skip archived tasks if not showing them
@@ -136,7 +177,18 @@ namespace WorkLedger_Client.ViewModels
                     
                 var taskViewModel = new TaskItemViewModel(task, this);
                 Tasks.Add(taskViewModel);
+                
+                // Fetch time entries for this task to calculate weekly total
+                var entries = await _localDbService.GetTimeEntriesByTaskIdAsync(task.Id);
+                foreach (var entry in entries)
+                {
+                    if (entry.EndTime != null && entry.StartTime >= weekStart)
+                    {
+                        weeklySeconds += entry.DurationSeconds ?? 0;
+                    }
+                }
             }
+            WeeklyTotal = TimeSpan.FromSeconds(weeklySeconds).ToString(@"hh\:mm\:ss");
         }
 
         public async Task LoadTimeEntriesAsync(TaskItemViewModel taskViewModel)
