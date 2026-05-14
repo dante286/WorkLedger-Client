@@ -313,7 +313,7 @@
                                                         <TextBlock Text="❌" FontSize="14" Foreground="{DynamicResource RedDanger}" />
                                                     </Button>
                                                     <ToggleButton IsChecked="{Binding IsExpanded}" Background="Transparent" Padding="0" BorderThickness="0">
-                                                        <TextBlock Text="{Binding IsExpanded, Converter={StaticResource BooleanToChevronConverter}}" FontSize="14" Foreground="{DynamicResource TextTertiary}" />
+                                                        <TextBlock Text="{Binding IsExpanded, Converter={StaticResource BooleanToChevronConverter}}" FontSize="28" Foreground="{DynamicResource TextTertiary}" />
                                                     </ToggleButton>
                                                 </StackPanel>
                                             </Grid>
