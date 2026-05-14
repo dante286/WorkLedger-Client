@@ -5,30 +5,59 @@
         Title="Project"
         WindowStartupLocation="CenterOwner"
         CanResize="False"
-        ShowInTaskbar="False">
+        ShowInTaskbar="False"
+        Background="{DynamicResource Background}"
+        Foreground="{DynamicResource TextPrimary}"
+        FontFamily="{DynamicResource FontBody}">
 
-  <Border Padding="12" CornerRadius="8" BorderBrush="#E0E0E0" BorderThickness="1">
+  <Border Padding="12" CornerRadius="8" Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Border}" BorderThickness="1">
     <StackPanel Spacing="10">
-      <TextBlock Text="Create Project" FontSize="16" FontWeight="Bold" />
+      <TextBlock Text="Create Project" FontSize="16" FontWeight="Bold" FontFamily="{DynamicResource FontDisplay}" Foreground="{DynamicResource TextPrimary}" />
 
       <StackPanel>
-        <TextBlock Text="Name" Margin="0,4,0,2" />
-        <TextBox x:Name="NameBox" Watermark="Project name" />
+        <TextBlock Text="Name" Margin="0,4,0,2" FontFamily="{DynamicResource FontBody}" Foreground="{DynamicResource TextSecondary}" />
+        <TextBox x:Name="NameBox" Watermark="Project name" Background="{DynamicResource Surface2}" BorderBrush="{DynamicResource Border}" Foreground="{DynamicResource TextPrimary}" />
       </StackPanel>
 
       <StackPanel>
-        <TextBlock Text="Project Code" Margin="0,4,0,2" />
-        <TextBox x:Name="CodeBox" Watermark="Code" />
+        <TextBlock Text="Project Code" Margin="0,4,0,2" FontFamily="{DynamicResource FontBody}" Foreground="{DynamicResource TextSecondary}" />
+        <TextBox x:Name="CodeBox" Watermark="Code" Background="{DynamicResource Surface2}" BorderBrush="{DynamicResource Border}" Foreground="{DynamicResource TextPrimary}" />
       </StackPanel>
 
       <StackPanel>
-        <TextBlock Text="Description" Margin="0,4,0,2" />
-        <TextBox x:Name="DescriptionBox" AcceptsReturn="True" Height="100" />
+        <TextBlock Text="Description" Margin="0,4,0,2" FontFamily="{DynamicResource FontBody}" Foreground="{DynamicResource TextSecondary}" />
+        <TextBox x:Name="DescriptionBox" AcceptsReturn="True" Height="100" Background="{DynamicResource Surface2}" BorderBrush="{DynamicResource Border}" Foreground="{DynamicResource TextPrimary}" />
       </StackPanel>
 
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
-        <Button Content="Cancel" Click="OnCancel" MinWidth="80" />
-        <Button Content="OK" Click="OnOk" IsDefault="True" MinWidth="80" Background="#0B79FF" Foreground="White" />
+        <Button Content="Cancel" 
+                Click="OnCancel" 
+                MinWidth="80"
+                Background="{DynamicResource Surface}"
+                Foreground="{DynamicResource TextPrimary}"
+                BorderBrush="{DynamicResource Border}"
+                BorderThickness="1"
+                CornerRadius="4">
+          <Button.Styles>
+            <Style Selector="Button:pointerover">
+              <Setter Property="Background" Value="{DynamicResource Surface2}" />
+            </Style>
+          </Button.Styles>
+        </Button>
+        <Button Content="OK" 
+                Click="OnOk" 
+                IsDefault="True" 
+                MinWidth="80"
+                Background="{DynamicResource TealActive}" 
+                Foreground="White"
+                BorderThickness="0"
+                CornerRadius="4">
+          <Button.Styles>
+            <Style Selector="Button:pointerover">
+              <Setter Property="Background" Value="{DynamicResource TealGlow}" />
+            </Style>
+          </Button.Styles>
+        </Button>
       </StackPanel>
     </StackPanel>
   </Border>

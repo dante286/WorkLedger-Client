@@ -2,18 +2,46 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="WorkLedger_Client.Views.TaskDialog"
         Width="400" Height="220"
-        Title="Create Task">
+        Title="Create Task"
+        Background="{DynamicResource Background}"
+        Foreground="{DynamicResource TextPrimary}"
+        FontFamily="{DynamicResource FontBody}">
 
     <StackPanel Margin="12" Spacing="8">
-        <TextBlock Text="Name" />
-        <TextBox x:Name="NameBox" />
+        <TextBlock Text="Name" FontFamily="{DynamicResource FontBody}" Foreground="{DynamicResource TextSecondary}" />
+        <TextBox x:Name="NameBox" Background="{DynamicResource Surface2}" BorderBrush="{DynamicResource Border}" Foreground="{DynamicResource TextPrimary}" />
 
-        <TextBlock Text="Notes" />
-        <TextBox x:Name="NotesBox" AcceptsReturn="True" Height="80" />
+        <TextBlock Text="Notes" FontFamily="{DynamicResource FontBody}" Foreground="{DynamicResource TextSecondary}" />
+        <TextBox x:Name="NotesBox" AcceptsReturn="True" Height="80" Background="{DynamicResource Surface2}" BorderBrush="{DynamicResource Border}" Foreground="{DynamicResource TextPrimary}" />
 
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
-            <Button Content="Cancel" Click="OnCancel" />
-            <Button Content="OK" Click="OnOk" />
+            <Button Content="Cancel" 
+                    Click="OnCancel"
+                    Background="{DynamicResource Surface}"
+                    Foreground="{DynamicResource TextPrimary}"
+                    BorderBrush="{DynamicResource Border}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="10,4">
+              <Button.Styles>
+                <Style Selector="Button:pointerover">
+                  <Setter Property="Background" Value="{DynamicResource Surface2}" />
+                </Style>
+              </Button.Styles>
+            </Button>
+            <Button Content="OK" 
+                    Click="OnOk"
+                    Background="{DynamicResource TealActive}" 
+                    Foreground="White"
+                    BorderThickness="0"
+                    CornerRadius="4"
+                    Padding="10,4">
+              <Button.Styles>
+                <Style Selector="Button:pointerover">
+                  <Setter Property="Background" Value="{DynamicResource TealGlow}" />
+                </Style>
+              </Button.Styles>
+            </Button>
         </StackPanel>
     </StackPanel>
 </Window>

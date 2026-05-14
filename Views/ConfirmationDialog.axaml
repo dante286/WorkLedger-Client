@@ -7,11 +7,14 @@
         Title="Confirm Delete"
         WindowStartupLocation="CenterOwner"
         CanResize="False"
-        ShowInTaskbar="False">
+        ShowInTaskbar="False"
+        Background="{DynamicResource Background}"
+        Foreground="{DynamicResource TextPrimary}"
+        FontFamily="{DynamicResource FontBody}">
 
-  <Border Padding="20">
+  <Border Padding="20" Background="{DynamicResource Surface}">
     <StackPanel Spacing="20">
-      <TextBlock>
+      <TextBlock FontFamily="{DynamicResource FontBody}" FontSize="14">
         <Run Text="Are you sure you want to" />
         <Run Text="{Binding Action}" />
         <Run Text="this" />
@@ -20,8 +23,34 @@
       </TextBlock>
 
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
-        <Button Content="No" Click="OnNo" MinWidth="80" />
-        <Button Content="Yes" Click="OnYes" IsDefault="True" MinWidth="80" />
+        <Button Content="No" 
+                Click="OnNo" 
+                MinWidth="80" 
+                Background="{DynamicResource Surface}"
+                Foreground="{DynamicResource TextPrimary}"
+                BorderBrush="{DynamicResource Border}"
+                BorderThickness="1"
+                CornerRadius="4">
+          <Button.Styles>
+            <Style Selector="Button:pointerover">
+              <Setter Property="Background" Value="{DynamicResource Surface2}" />
+            </Style>
+          </Button.Styles>
+        </Button>
+        <Button Content="Yes" 
+                Click="OnYes" 
+                IsDefault="True" 
+                MinWidth="80"
+                Background="{DynamicResource TealActive}" 
+                Foreground="White"
+                BorderThickness="0"
+                CornerRadius="4">
+          <Button.Styles>
+            <Style Selector="Button:pointerover">
+              <Setter Property="Background" Value="{DynamicResource TealGlow}" />
+            </Style>
+          </Button.Styles>
+        </Button>
       </StackPanel>
     </StackPanel>
   </Border>
