@@ -191,6 +191,12 @@
                         </ListBox.ItemTemplate>
                     </ListBox>
 
+                    <GridSplitter Grid.Column="0"
+                                  Width="4"
+                                  HorizontalAlignment="Right"
+                                  Background="{DynamicResource Border}"
+                                  Margin="0,0,0,0" />
+
                     <Grid Grid.Column="1" RowDefinitions="Auto,*" Margin="0">
                         <!-- Project Header -->
                         <Border Grid.Row="0" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1" Padding="18,14,18,12" Background="{DynamicResource Surface}">
@@ -311,6 +317,9 @@
                                                     </Button>
                                                     <Button Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).DeleteTaskCommand}" CommandParameter="{Binding}" Background="Transparent" Padding="0">
                                                         <TextBlock Text="❌" FontSize="14" Foreground="{DynamicResource RedDanger}" />
+                                                    </Button>
+                                                    <Button Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).ArchiveTaskCommand}" CommandParameter="{Binding}" Background="Transparent" Padding="0">
+                                                        <TextBlock Text="📦" FontSize="14" Foreground="{DynamicResource TextTertiary}" />
                                                     </Button>
                                                     <ToggleButton IsChecked="{Binding IsExpanded}" Background="Transparent" Padding="0" BorderThickness="0">
                                                         <TextBlock Text="{Binding IsExpanded, Converter={StaticResource BooleanToChevronConverter}}" FontSize="28" Foreground="{DynamicResource TextTertiary}" />
