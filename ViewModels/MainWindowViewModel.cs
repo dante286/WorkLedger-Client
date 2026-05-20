@@ -22,11 +22,11 @@ namespace WorkLedger_Client.ViewModels
         public ObservableCollection<Project> Projects { get; } = new();
         public ObservableCollection<TaskItemViewModel> Tasks { get; } = new();
 
-        private Project _selectedProject;
-        private TaskItemViewModel _selectedTask;
-        private TimeEntry _selectedTimeEntry;
+        private Project? _selectedProject;
+        private TaskItemViewModel? _selectedTask;
+        private TimeEntry? _selectedTimeEntry;
 
-        public Project SelectedProject
+        public Project? SelectedProject
         {
             get => _selectedProject;
             set
@@ -37,7 +37,7 @@ namespace WorkLedger_Client.ViewModels
             }
         }
 
-        public TaskItemViewModel SelectedTask
+        public TaskItemViewModel? SelectedTask
         {
             get => _selectedTask;
             set
@@ -47,7 +47,7 @@ namespace WorkLedger_Client.ViewModels
             }
         }
 
-        public TimeEntry SelectedTimeEntry
+        public TimeEntry? SelectedTimeEntry
         {
             get => _selectedTimeEntry;
             set
