@@ -12,21 +12,49 @@ namespace WorkLedger_Client.Converters
             if (values.Count < 2)
                 return false;
 
-            if (values[0] is int activeProjectId && values[1] is int projectId)
+            // Extract activeProjectId
+            int? activeProjectId = ExtractProjectId(values[0]);
+
+            // Extract projectId  
+            int? projectId = ExtractProjectId(values[1]);
+
+            // If no active project, check parameter
+            if (activeProjectId == null)
             {
-                var match = activeProjectId == projectId;
                 if (parameter is string str && str.Equals("Invert", StringComparison.OrdinalIgnoreCase))
                 {
-                    return !match;
+                    return true; // No active project, show buttons/non-active UI
                 }
-                return match;
-            }
-            if (values[0] == null && values[1] is int)
-            {
-                return false;
+                return false; // No active project, don't show active indicator
             }
 
-            return false;
+            if (projectId == null)
+                return false;
+
+            var match = activeProjectId == projectId;
+            if (parameter is string str2 && str2.Equals("Invert", StringComparison.OrdinalIgnoreCase))
+            {
+                return !match;
+            }
+            return match;
+        }
+
+        private int? ExtractProjectId(object? value)
+        {
+            if (value == null)
+                return null;
+
+            if (value is int intVal)
+                return intVal;
+
+            // Handle nullable int by converting through the type system
+            var valueType = value.GetType();
+            if (valueType.IsGenericType && valueType.GetGenericTypeDefinition() == typeof(Nullable<>))
+            {
+                return (int?)value;
+            }
+
+            return null;
         }
 
         public IList<object?> ConvertBack(object? value, Type[] targetTypes, object? parameter, CultureInfo culture)
