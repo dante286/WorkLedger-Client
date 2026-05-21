@@ -1,10 +1,9 @@
 ﻿using SQLite;
 using System;
-using System.ComponentModel;
 
 namespace WorkLedger_Client.Models
 {
-    public class TimeEntry : INotifyPropertyChanged
+    public class TimeEntry
     {
         [PrimaryKey, AutoIncrement]
         public int Id { get; set; }
@@ -18,7 +17,5 @@ namespace WorkLedger_Client.Models
 
         [Ignore]
         public TimeSpan Duration => EndTime.HasValue ? EndTime.Value - StartTime : DateTime.UtcNow - StartTime;
-
-        public event PropertyChangedEventHandler? PropertyChanged;
     }
 }
