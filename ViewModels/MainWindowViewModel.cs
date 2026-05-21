@@ -1,4 +1,4 @@
-﻿using System;
+﻿﻿using System;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
@@ -127,6 +127,7 @@ namespace WorkLedger_Client.ViewModels
             {
                 ActiveTaskId = null;
                 ActiveProjectId = null;
+                ActiveProjectName = string.Empty;
                 return;
             }
 
@@ -387,6 +388,12 @@ namespace WorkLedger_Client.ViewModels
             {
                 await _timerService.StopTimerAsync();
                 taskViewModel.CurrentDuration = null;
+
+                // Clear active indicators so the UI updates (hides pills/dots)
+                ActiveTaskId = null;
+                ActiveProjectId = null;
+                ActiveProjectName = string.Empty;
+                ActiveTimerValue = "00:00:00";
             }
             else
             {

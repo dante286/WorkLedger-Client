@@ -21,6 +21,7 @@
         <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
         <converters:BooleanToChevronConverter x:Key="BooleanToChevronConverter"/>
         <converters:ActiveTaskToTagConverter x:Key="ActiveTaskToTagConverter" />
+        <converters:ActiveProjectMatchConverter x:Key="ActiveProjectMatchConverter" />
     </Window.Resources>
 
     <Grid>
@@ -141,6 +142,12 @@
                             <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
                                 <Setter Property="Background" Value="Transparent" />
                             </Style>
+                            <Style Selector="ListBoxItem:selected /template/ Border">
+                                <Setter Property="BorderBrush" Value="{DynamicResource TealActive}" />
+                                <Setter Property="BorderThickness" Value="1" />
+                                <Setter Property="CornerRadius" Value="12" />
+                                <Setter Property="Background" Value="#1a0d9488" />
+                            </Style>
                         </ListBox.Styles>
                         <ListBox.ItemTemplate>
                             <DataTemplate DataType="models:Project">
@@ -163,25 +170,63 @@
                                         <StackPanel Orientation="Horizontal" Spacing="5">
                                             <TextBlock Text="{Binding ProjectCode}" FontSize="10" FontFamily="{DynamicResource FontMono}"
                                                        Foreground="{DynamicResource TextQuaternary}" />
-                                            <Border IsVisible="{Binding $parent[ListBoxItem].((vm:MainWindowViewModel)DataContext).ActiveProjectId, Converter={x:Static ObjectConverters.Equal}, ConverterParameter={Binding Id}}"
-                                                    Background="{DynamicResource TealActive}" Opacity="0.18" CornerRadius="4" Padding="7,2">
-                                                <TextBlock Text="RUNNING" FontSize="9" FontWeight="700" Foreground="{DynamicResource TealGlow}" />
+                                            <Border Background="{DynamicResource TealActive}"
+                                                    CornerRadius="10"
+                                                    Padding="8,2"
+                                                    Margin="0,2,0,0"
+                                                    BoxShadow="0 0 10 0 #400d9488"
+                                                    VerticalAlignment="Center">
+                                                <Border.IsVisible>
+                                                    <MultiBinding Converter="{StaticResource ActiveProjectMatchConverter}">
+                                                        <Binding Path="DataContext.ActiveProjectId" ElementName="ProjectsList" />
+                                                        <Binding Path="Id" />
+                                                    </MultiBinding>
+                                                </Border.IsVisible>
+                                                <TextBlock Text="RUNNING" FontSize="9" FontWeight="800"
+                                                           Foreground="White" LetterSpacing="0.5"
+                                                           VerticalAlignment="Center" />
                                             </Border>
                                         </StackPanel>
                                     </StackPanel>
                                     
                                     <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="9" VerticalAlignment="Center">
-                                        <Ellipse IsVisible="{Binding $parent[ListBoxItem].((vm:MainWindowViewModel)DataContext).ActiveProjectId, Converter={x:Static ObjectConverters.Equal}, ConverterParameter={Binding Id}}"
-                                                 Width="7" Height="7" Fill="{DynamicResource TealActive}" />
+                                        <Ellipse Width="7" Height="7" Fill="{DynamicResource TealActive}">
+                                            <Ellipse.IsVisible>
+                                                <MultiBinding Converter="{StaticResource ActiveProjectMatchConverter}">
+                                                    <Binding Path="DataContext.ActiveProjectId" ElementName="ProjectsList" />
+                                                    <Binding Path="Id" />
+                                                </MultiBinding>
+                                            </Ellipse.IsVisible>
+                                        </Ellipse>
                                         
-                                        <Button IsVisible="{Binding !$parent[ListBoxItem].((vm:MainWindowViewModel)DataContext).ActiveProjectId, Converter={x:Static ObjectConverters.Equal}, ConverterParameter={Binding Id}}"
-                                                Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).EditProjectCommand}"
-                                                CommandParameter="{Binding}" Background="Transparent" BorderThickness="0" Padding="0">
+                                        <Button Background="Transparent" BorderThickness="0" Padding="0">
+                                            <Button.IsVisible>
+                                                <MultiBinding Converter="{StaticResource ActiveProjectMatchConverter}" ConverterParameter="Invert">
+                                                    <Binding Path="DataContext.ActiveProjectId" ElementName="ProjectsList" />
+                                                    <Binding Path="Id" />
+                                                </MultiBinding>
+                                            </Button.IsVisible>
+                                            <Button.Command>
+                                                <Binding Path="DataContext.EditProjectCommand" ElementName="ProjectsList" />
+                                            </Button.Command>
+                                            <Button.CommandParameter>
+                                                <Binding />
+                                            </Button.CommandParameter>
                                             <TextBlock Text="✏️" FontSize="13" Foreground="{DynamicResource AmberWarning}" Opacity="0.7" />
                                         </Button>
-                                        <Button IsVisible="{Binding !$parent[ListBoxItem].((vm:MainWindowViewModel)DataContext).ActiveProjectId, Converter={x:Static ObjectConverters.Equal}, ConverterParameter={Binding Id}}"
-                                                Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).DeleteProjectCommand}"
-                                                CommandParameter="{Binding}" Background="Transparent" BorderThickness="0" Padding="0">
+                                        <Button Background="Transparent" BorderThickness="0" Padding="0">
+                                            <Button.IsVisible>
+                                                <MultiBinding Converter="{StaticResource ActiveProjectMatchConverter}" ConverterParameter="Invert">
+                                                    <Binding Path="DataContext.ActiveProjectId" ElementName="ProjectsList" />
+                                                    <Binding Path="Id" />
+                                                </MultiBinding>
+                                            </Button.IsVisible>
+                                            <Button.Command>
+                                                <Binding Path="DataContext.DeleteProjectCommand" ElementName="ProjectsList" />
+                                            </Button.Command>
+                                            <Button.CommandParameter>
+                                                <Binding />
+                                            </Button.CommandParameter>
                                             <TextBlock Text="❌" FontSize="13" Foreground="{DynamicResource RedDanger}" Opacity="0.7" />
                                         </Button>
                                     </StackPanel>
@@ -204,10 +249,10 @@
                                 <StackPanel>
                                     <TextBlock Text="{Binding SelectedProject.Name}" FontSize="16" FontWeight="700" FontFamily="{DynamicResource FontDisplay}" Foreground="{DynamicResource TextPrimary}" />
                                     <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,3,0,0">
-                                        <TextBlock Text="{Binding TaskCount}" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextQuaternary}" />
-                                        <TextBlock Text="TASKS" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextQuaternary}" />
-                                        <TextBlock Text="·" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextQuaternary}" />
-                                        <TextBlock Text="THIS WEEK:" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextQuaternary}" />
+                                        <TextBlock Text="{Binding TaskCount}" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
+                                        <TextBlock Text="TASKS" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
+                                        <TextBlock Text="·" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
+                                        <TextBlock Text="THIS WEEK:" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
                                         <TextBlock Text="{Binding WeeklyTotal}" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TealActive}" />
                                     </StackPanel>
                                 </StackPanel>
@@ -288,7 +333,7 @@
                                                            TextDecorations="{Binding IsCompleted, Converter={StaticResource BooleanToTextDecorationsConverter}}" />
                                                 
                                                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Spacing="2">
-                                                    <TextBlock Text="Total:" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextSecondary}" Opacity="0.5" />
+                                                    <TextBlock Text="TOTAL" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
                                                     <TextBlock Text="{Binding TotalTime}" FontSize="12" FontWeight="500" FontFamily="{DynamicResource FontMono}">
                                                         <TextBlock.Styles>
                                                             <Style Selector="TextBlock">
@@ -339,7 +384,7 @@
                                                                     <Style Selector="Grid">
                                                                     </Style>
                                                                 </Grid.Styles>
-                                                                <TextBlock Grid.Column="0" FontSize="11" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}">
+                                                                <TextBlock Grid.Column="0" FontSize="11" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextSecondary}">
                                                                     <TextBlock.Text>
                                                                         <MultiBinding StringFormat="{}{0:yyyy-MM-dd}: {0:HH:mm:ss} – {1:HH:mm:ss}">
                                                                             <Binding Path="StartTime" Converter="{StaticResource UtcToLocalTimeConverter}"/>
@@ -348,7 +393,7 @@
                                                                     </TextBlock.Text>
                                                                 </TextBlock>
                                                                 <TextBlock Grid.Column="1" Text="{Binding DurationSeconds, Converter={StaticResource SecondsToDurationConverter}}" 
-                                                                           FontSize="11" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextSecondary}" Opacity="0.5" Margin="0,0,8,0" />
+                                                                           FontSize="11" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextPrimary}" Margin="0,0,8,0" />
                                                                 <Button Grid.Column="2" Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).DeleteTimeEntryCommand}" CommandParameter="{Binding}" 
                                                                         Background="Transparent" Padding="0">
                                                                     <TextBlock Text="✕" FontSize="11" Foreground="{DynamicResource RedDanger}" Opacity="0.4">
