@@ -384,7 +384,7 @@
                                                                     <Style Selector="Grid">
                                                                     </Style>
                                                                 </Grid.Styles>
-                                                                <TextBlock Grid.Column="0" FontSize="11" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextSecondary}">
+                                                                <TextBlock Grid.Column="0" FontSize="11" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}">
                                                                     <TextBlock.Text>
                                                                         <MultiBinding StringFormat="{}{0:yyyy-MM-dd}: {0:HH:mm:ss} – {1:HH:mm:ss}">
                                                                             <Binding Path="StartTime" Converter="{StaticResource UtcToLocalTimeConverter}"/>
@@ -393,7 +393,7 @@
                                                                     </TextBlock.Text>
                                                                 </TextBlock>
                                                                 <TextBlock Grid.Column="1" Text="{Binding DurationSeconds, Converter={StaticResource SecondsToDurationConverter}}" 
-                                                                           FontSize="11" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextPrimary}" Margin="0,0,8,0" />
+                                                                           FontSize="11" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0" />
                                                                 <Button Grid.Column="2" Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).DeleteTimeEntryCommand}" CommandParameter="{Binding}" 
                                                                         Background="Transparent" Padding="0">
                                                                     <TextBlock Text="✕" FontSize="11" Foreground="{DynamicResource RedDanger}" Opacity="0.4">
