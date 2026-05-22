@@ -250,9 +250,9 @@
                                     <TextBlock Text="{Binding SelectedProject.Name}" FontSize="16" FontWeight="700" FontFamily="{DynamicResource FontDisplay}" Foreground="{DynamicResource TextPrimary}" />
                                     <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,3,0,0">
                                         <TextBlock Text="{Binding TaskCount}" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
-                                        <TextBlock Text="TASKS" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
+                                        <TextBlock Text="Tasks" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextSecondary}" />
                                         <TextBlock Text="·" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
-                                        <TextBlock Text="THIS WEEK:" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
+                                        <TextBlock Text="This Week:" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextSecondary}" />
                                         <TextBlock Text="{Binding WeeklyTotal}" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TealActive}" />
                                     </StackPanel>
                                 </StackPanel>
