@@ -105,7 +105,7 @@
                                             <Setter Property="BorderThickness" Value="1.5" />
                                         </Style>
                                     </CheckBox.Styles>
-                                    <TextBlock Text="Show Archived Tasks" FontSize="12" Foreground="{DynamicResource TextTertiary}" />
+                                    <TextBlock Text="Show Archived Tasks" FontSize="12" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
                                 </CheckBox>
                             </StackPanel>
                         </Grid>
@@ -139,14 +139,10 @@
                                 <Setter Property="BorderThickness" Value="0,0,0,1" />
                                 <Setter Property="BorderBrush" Value="{DynamicResource Border}" />
                             </Style>
-                            <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
-                                <Setter Property="Background" Value="Transparent" />
-                            </Style>
-                            <Style Selector="ListBoxItem:selected /template/ Border">
+                            <Style Selector="ListBoxItem:selected">
+                                <Setter Property="Background" Value="{DynamicResource Slate200}" />
                                 <Setter Property="BorderBrush" Value="{DynamicResource TealActive}" />
-                                <Setter Property="BorderThickness" Value="1" />
-                                <Setter Property="CornerRadius" Value="12" />
-                                <Setter Property="Background" Value="#1a0d9488" />
+                                <Setter Property="BorderThickness" Value="6,0,0,0" />
                             </Style>
                         </ListBox.Styles>
                         <ListBox.ItemTemplate>
@@ -326,12 +322,12 @@
                                                 </CheckBox>
                                                 
                                                 <TextBlock Grid.Column="1" Text="{Binding Name}" VerticalAlignment="Center"
-                                                           FontSize="13" FontWeight="500" FontFamily="{DynamicResource FontBody}"
+                                                           FontSize="13" FontWeight="500" FontFamily="{DynamicResource FontMono}"
                                                            Foreground="{DynamicResource TextPrimary}"
                                                            TextDecorations="{Binding IsCompleted, Converter={StaticResource BooleanToTextDecorationsConverter}}" />
                                                 
                                                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Spacing="2">
-                                                    <TextBlock Text="TOTAL" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
+                                                    <TextBlock Text="Total" FontSize="11" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
                                                     <TextBlock Text="{Binding TotalTime}" FontSize="12" FontWeight="500" FontFamily="{DynamicResource FontMono}">
                                                         <TextBlock.Styles>
                                                             <Style Selector="TextBlock">
@@ -350,19 +346,19 @@
                                                     </TextBlock>
                                                 </StackPanel>
                                                 
-                                                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center" Spacing="8" Margin="8,0,0,0">
+                                                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center" Spacing="12" Margin="12,0,0,0">
                                                     <!-- Actions -->
                                                     <Button Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).ToggleTimerCommand}" CommandParameter="{Binding}" Background="Transparent" Padding="0">
-                                                        <TextBlock Text="⏱️" FontSize="14" Foreground="{DynamicResource TealActive}" />
+                                                        <TextBlock Text="⏱️" FontSize="16" Foreground="{DynamicResource TealActive}" />
                                                     </Button>
                                                     <Button Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).EditTaskCommand}" CommandParameter="{Binding}" Background="Transparent" Padding="0">
-                                                        <TextBlock Text="✏️" FontSize="14" Foreground="{DynamicResource AmberWarning}" />
+                                                        <TextBlock Text="✏️" FontSize="16" Foreground="{DynamicResource AmberWarning}" />
                                                     </Button>
                                                     <Button Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).DeleteTaskCommand}" CommandParameter="{Binding}" Background="Transparent" Padding="0">
-                                                        <TextBlock Text="❌" FontSize="14" Foreground="{DynamicResource RedDanger}" />
+                                                        <TextBlock Text="❌" FontSize="16" Foreground="{DynamicResource RedDanger}" />
                                                     </Button>
                                                     <Button Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).ArchiveTaskCommand}" CommandParameter="{Binding}" Background="Transparent" Padding="0">
-                                                        <TextBlock Text="📦" FontSize="14" Foreground="{DynamicResource TextTertiary}" />
+                                                        <TextBlock Text="📦" FontSize="16" Foreground="{DynamicResource TextTertiary}" />
                                                     </Button>
                                                     <ToggleButton IsChecked="{Binding IsExpanded}" Background="Transparent" Padding="0" BorderThickness="0">
                                                         <TextBlock Text="{Binding IsExpanded, Converter={StaticResource BooleanToChevronConverter}}" FontSize="28" Foreground="{DynamicResource TextTertiary}" />
