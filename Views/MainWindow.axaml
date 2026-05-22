@@ -165,11 +165,9 @@
                                                Foreground="{DynamicResource TealActive}" />
                                     
                                     <StackPanel Grid.Column="1" Margin="11,0" VerticalAlignment="Center">
-                                        <TextBlock Text="{Binding Name}" FontSize="13" FontWeight="500" FontFamily="{DynamicResource FontBody}"
+                                        <TextBlock Text="{Binding Name}" FontSize="13" FontWeight="500" FontFamily="{DynamicResource FontMono}"
                                                    Foreground="{DynamicResource TextPrimary}" />
                                         <StackPanel Orientation="Horizontal" Spacing="5">
-                                            <TextBlock Text="{Binding ProjectCode}" FontSize="10" FontFamily="{DynamicResource FontMono}"
-                                                       Foreground="{DynamicResource TextQuaternary}" />
                                             <Border Background="{DynamicResource TealActive}"
                                                     CornerRadius="10"
                                                     Padding="8,2"
