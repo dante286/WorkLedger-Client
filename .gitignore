@@ -7,4 +7,6 @@ bin/*
 .aider*
 
 CLAUDE.md
+.claude/*
+
 GEMINI.md
