@@ -377,7 +377,7 @@
                                             <ItemsControl ItemsSource="{Binding TimeEntries}" IsVisible="{Binding IsExpanded}" Margin="36,0,12,8">
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate DataType="models:TimeEntry">
-                                                        <Border Background="#990d141e" CornerRadius="5" Margin="0,0,0,3">
+                                                        <Border Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="5" Margin="0,0,0,3">
                                                         <Border Padding="8,5">
                                                             <Grid ColumnDefinitions="*,Auto,Auto">
                                                                 <Grid.Styles>
