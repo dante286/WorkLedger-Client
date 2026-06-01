@@ -121,6 +121,7 @@
                     </Grid.ColumnDefinitions>
 
                     <ListBox x:Name="ProjectsList"
+                             x:DataType="vm:MainWindowViewModel"
                              Grid.Column="0"
                              Margin="0"
                              Padding="0,6"
@@ -172,7 +173,7 @@
                                                     VerticalAlignment="Center">
                                                 <Border.IsVisible>
                                                     <MultiBinding Converter="{StaticResource ActiveProjectMatchConverter}">
-                                                        <Binding Path="DataContext.ActiveProjectId" ElementName="ProjectsList" />
+                                                    <Binding Path="((vm:MainWindowViewModel)DataContext).ActiveProjectId" ElementName="ProjectsList" />
                                                         <Binding Path="Id" />
                                                     </MultiBinding>
                                                 </Border.IsVisible>
@@ -187,7 +188,7 @@
                                         <Ellipse Width="7" Height="7" Fill="{DynamicResource TealActive}">
                                             <Ellipse.IsVisible>
                                                 <MultiBinding Converter="{StaticResource ActiveProjectMatchConverter}">
-                                                    <Binding Path="DataContext.ActiveProjectId" ElementName="ProjectsList" />
+                                                    <Binding Path="((vm:MainWindowViewModel)DataContext).ActiveProjectId" ElementName="ProjectsList" />
                                                     <Binding Path="Id" />
                                                 </MultiBinding>
                                             </Ellipse.IsVisible>
@@ -196,12 +197,12 @@
                                         <Button Background="Transparent" BorderThickness="0" Padding="0">
                                             <Button.IsVisible>
                                                 <MultiBinding Converter="{StaticResource ActiveProjectMatchConverter}" ConverterParameter="Invert">
-                                                    <Binding Path="DataContext.ActiveProjectId" ElementName="ProjectsList" />
+                                                    <Binding Path="((vm:MainWindowViewModel)DataContext).ActiveProjectId" ElementName="ProjectsList" />
                                                     <Binding Path="Id" />
                                                 </MultiBinding>
                                             </Button.IsVisible>
                                             <Button.Command>
-                                                <Binding Path="DataContext.EditProjectCommand" ElementName="ProjectsList" />
+                                                <Binding Path="((vm:MainWindowViewModel)DataContext).EditProjectCommand" ElementName="ProjectsList" />
                                             </Button.Command>
                                             <Button.CommandParameter>
                                                 <Binding />
@@ -211,12 +212,12 @@
                                         <Button Background="Transparent" BorderThickness="0" Padding="0">
                                             <Button.IsVisible>
                                                 <MultiBinding Converter="{StaticResource ActiveProjectMatchConverter}" ConverterParameter="Invert">
-                                                    <Binding Path="DataContext.ActiveProjectId" ElementName="ProjectsList" />
+                                                    <Binding Path="((vm:MainWindowViewModel)DataContext).ActiveProjectId" ElementName="ProjectsList" />
                                                     <Binding Path="Id" />
                                                 </MultiBinding>
                                             </Button.IsVisible>
                                             <Button.Command>
-                                                <Binding Path="DataContext.DeleteProjectCommand" ElementName="ProjectsList" />
+                                                <Binding Path="((vm:MainWindowViewModel)DataContext).DeleteProjectCommand" ElementName="ProjectsList" />
                                             </Button.Command>
                                             <Button.CommandParameter>
                                                 <Binding />
@@ -258,6 +259,7 @@
                         </Border>
 
                         <ListBox x:Name="TasksList"
+                                 x:DataType="vm:MainWindowViewModel"
                                  Grid.Row="1"
                                  Padding="12,10"
                                  Background="{DynamicResource Background}"
