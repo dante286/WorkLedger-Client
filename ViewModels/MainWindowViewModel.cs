@@ -420,6 +420,15 @@ namespace WorkLedger_Client.ViewModels
         }
 
         [RelayCommand]
+        private async Task ToggleArchiveTaskAsync(TaskItemViewModel taskViewModel)
+        {
+            var task = taskViewModel.GetModel();
+            task.IsArchived = !task.IsArchived;
+            await _localDbService.SaveTaskAsync(task);
+            await LoadTasksAsync();
+        }
+
+        [RelayCommand]
         private async Task ArchiveTaskAsync(TaskItemViewModel taskViewModel)
         {
             var task = taskViewModel.GetModel();

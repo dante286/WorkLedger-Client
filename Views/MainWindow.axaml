@@ -22,6 +22,7 @@
         <converters:BooleanToChevronConverter x:Key="BooleanToChevronConverter"/>
         <converters:ActiveTaskToTagConverter x:Key="ActiveTaskToTagConverter" />
         <converters:ActiveProjectMatchConverter x:Key="ActiveProjectMatchConverter" />
+        <converters:BooleanToArchiveColorConverter x:Key="BooleanToArchiveColorConverter" />
     </Window.Resources>
 
     <Grid>
@@ -366,8 +367,8 @@
                                                     <Button Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).DeleteTaskCommand}" CommandParameter="{Binding}" Background="Transparent" Padding="0">
                                                         <TextBlock Text="❌" FontSize="16" Foreground="{DynamicResource RedDanger}" />
                                                     </Button>
-                                                    <Button Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).ArchiveTaskCommand}" CommandParameter="{Binding}" Background="Transparent" Padding="0">
-                                                        <TextBlock Text="📦" FontSize="16" Foreground="{DynamicResource TextTertiary}" />
+                                                    <Button Command="{Binding $parent[ListBox].((vm:MainWindowViewModel)DataContext).ToggleArchiveTaskCommand}" CommandParameter="{Binding}" Background="Transparent" Padding="0">
+                                                        <TextBlock Text="📦" FontSize="16" Foreground="{Binding IsArchived, Converter={StaticResource BooleanToArchiveColorConverter}}" />
                                                     </Button>
                                                     <ToggleButton IsChecked="{Binding IsExpanded}" Background="Transparent" Padding="0" BorderThickness="0">
                                                         <TextBlock Text="{Binding IsExpanded, Converter={StaticResource BooleanToChevronConverter}}" FontSize="28" Foreground="{DynamicResource TextTertiary}" />
