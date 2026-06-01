@@ -298,7 +298,14 @@
                                         </Border.Tag>
                                         
                                         <StackPanel>
-                                            <Border Padding="12,10">
+                                            <Border x:Name="TaskHeader" Padding="12,10" Classes.expanded="{Binding IsExpanded}">
+                                                <Border.Styles>
+                                                    <Style Selector="Border#TaskHeader.expanded">
+                                                        <Setter Property="Background" Value="{DynamicResource Surface2}" />
+                                                        <Setter Property="BorderBrush" Value="{DynamicResource Border}" />
+                                                        <Setter Property="BorderThickness" Value="0,0,0,1" />
+                                                    </Style>
+                                                </Border.Styles>
                                                 <Grid ColumnDefinitions="Auto,*,Auto,Auto">
                                                     <Grid.Styles>
                                                         <Style Selector="Grid">
@@ -368,7 +375,7 @@
                                             </Border>
                                             
                                             <!-- Time Entries -->
-                                            <ItemsControl ItemsSource="{Binding TimeEntries}" IsVisible="{Binding IsExpanded}" Margin="36,0,12,8">
+                                            <ItemsControl ItemsSource="{Binding TimeEntries}" IsVisible="{Binding IsExpanded}" Margin="36,4,12,8">
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate DataType="models:TimeEntry">
                                                         <Border Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="5" Margin="0,0,0,3">
