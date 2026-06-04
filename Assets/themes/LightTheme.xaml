@@ -47,7 +47,7 @@
     <!-- Text Colors -->
     <Color x:Key="TextPrimary">#0e1117</Color>
     <Color x:Key="TextSecondary">#2c3a50</Color>
-    <Color x:Key="TextTertiary">#4a6080</Color>
+    <Color x:Key="TextTertiary">#5a7190</Color>
     <Color x:Key="TextQuaternary">#5e7a96</Color>
     
     <!-- Font Definitions -->

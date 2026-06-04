@@ -415,14 +415,16 @@
                                                                 <TextBlock Grid.Column="1" Text="{Binding DurationSeconds, Converter={StaticResource SecondsToDurationConverter}}" 
                                                                            FontSize="11" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0" />
                                                                 <Button Grid.Column="2" Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).DeleteTimeEntryCommand}" CommandParameter="{Binding}" 
-                                                                        Background="Transparent" Padding="0">
-                                                                    <TextBlock Text="✕" FontSize="11" Foreground="{DynamicResource RedDanger}" Opacity="0.4">
-                                                                        <TextBlock.Styles>
-                                                                            <Style Selector="TextBlock:pointerover">
-                                                                                <Setter Property="Opacity" Value="0.9" />
-                                                                            </Style>
-                                                                        </TextBlock.Styles>
-                                                                    </TextBlock>
+                                                                        Background="Transparent" Padding="0" BorderThickness="0">
+                                                                    <Button.Styles>
+                                                                        <Style Selector="Button">
+                                                                            <Setter Property="Opacity" Value="0.4" />
+                                                                        </Style>
+                                                                        <Style Selector="Button:pointerover">
+                                                                            <Setter Property="Opacity" Value="1" />
+                                                                        </Style>
+                                                                    </Button.Styles>
+                                                                    <TextBlock Text="✕" FontSize="11" Foreground="{DynamicResource RedDanger}" />
                                                                 </Button>
                                                             </Grid>
                                                         </Border>
