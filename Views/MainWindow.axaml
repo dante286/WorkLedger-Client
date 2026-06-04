@@ -142,14 +142,30 @@
                                 <Setter Property="BorderBrush" Value="{DynamicResource Border}" />
                             </Style>
                             <Style Selector="ListBoxItem:selected">
-                                <Setter Property="Background" Value="{DynamicResource Slate200}" />
-                                <Setter Property="BorderBrush" Value="{DynamicResource TealActive}" />
-                                <Setter Property="BorderThickness" Value="6,0,0,0" />
+                                <Setter Property="Background" Value="Transparent" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource Border}" />
+                                <Setter Property="BorderThickness" Value="0,0,0,1" />
                             </Style>
                         </ListBox.Styles>
                         <ListBox.ItemTemplate>
                             <DataTemplate DataType="models:Project">
-                                <Border Background="Transparent" Padding="16,11">
+                                <Border x:Name="ProjectItemBorder"
+                                        Background="Transparent"
+                                        BorderBrush="Transparent"
+                                        BorderThickness="0"
+                                        Padding="14,11,16,11">
+                                    <Border.Styles>
+                                        <Style Selector="Border#ProjectItemBorder">
+                                            <Setter Property="Background" Value="Transparent" />
+                                            <Setter Property="BorderBrush" Value="Transparent" />
+                                            <Setter Property="BorderThickness" Value="0" />
+                                        </Style>
+                                        <Style Selector="ListBoxItem:selected Border#ProjectItemBorder">
+                                            <Setter Property="Background" Value="{DynamicResource SelectedProjectBackground}" />
+                                            <Setter Property="BorderBrush" Value="{DynamicResource SelectedProjectBorder}" />
+                                            <Setter Property="BorderThickness" Value="2,0,0,0" />
+                                        </Style>
+                                    </Border.Styles>
                                     <Grid x:Name="ProjectItemGrid" ColumnDefinitions="Auto,*,Auto">
                                         <Grid.Styles>
                                             <Style Selector="Grid">

@@ -41,6 +41,8 @@
     <Color x:Key="Surface2">#f0f5fa</Color>
     <Color x:Key="Border">#dce8f2</Color>
     <Color x:Key="Border2">#bdd0e3</Color>
+    <Color x:Key="SelectedProjectBackground">#120d9488</Color>
+    <Color x:Key="SelectedProjectBorder">#0d9488</Color>
     
     <!-- Text Colors -->
     <Color x:Key="TextPrimary">#0e1117</Color>
