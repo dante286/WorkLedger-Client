@@ -264,7 +264,7 @@
                                         <TextBlock Text="{Binding TaskCount}" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
                                         <TextBlock Text="Tasks" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextSecondary}" />
                                         <TextBlock Text="·" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
-                                        <TextBlock Text="This Week:" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextSecondary}" />
+                                        <TextBlock Text="This Week:" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
                                         <TextBlock Text="{Binding WeeklyTotal}" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TealActive}" />
                                     </StackPanel>
                                 </StackPanel>
