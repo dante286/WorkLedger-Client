@@ -48,7 +48,7 @@
     <Color x:Key="TextPrimary">#0e1117</Color>
     <Color x:Key="TextSecondary">#2c3a50</Color>
     <Color x:Key="TextTertiary">#5a7190</Color>
-    <Color x:Key="TextQuaternary">#5e7a96</Color>
+    <Color x:Key="TextQuaternary">#8ba3be</Color>
     
     <!-- Font Definitions -->
     <FontFamily x:Key="FontDisplay">avares://WorkLedger-Client/Assets/fonts#Manrope</FontFamily>
