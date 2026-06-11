@@ -301,12 +301,14 @@
                                             <Style Selector="Border">
                                                 <Setter Property="BorderBrush" Value="{DynamicResource Border}" />
                                                 <Setter Property="Opacity" Value="0.75" />
+                                                <Setter Property="BoxShadow" Value="0 1 4 0 #0D000000" />
                                             </Style>
                                             <!-- Active Task treatment -->
                                             <Style Selector="Border[Tag=Active]">
                                                 <Setter Property="BorderBrush" Value="{DynamicResource TealActive}" />
                                                 <Setter Property="Background" Value="#1a0d9488" /> <!-- Subtle teal bg -->
                                                 <Setter Property="Opacity" Value="1.0" />
+                                                <Setter Property="BoxShadow" Value="0 2 10 0 #140d9488" />
                                             </Style>
                                         </Border.Styles>
                                         <Border.Tag>
