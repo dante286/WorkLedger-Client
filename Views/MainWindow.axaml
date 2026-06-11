@@ -350,7 +350,7 @@
                                                 </CheckBox>
                                                 
                                                 <TextBlock Grid.Column="1" Text="{Binding Name}" VerticalAlignment="Center"
-                                                           FontSize="13" FontWeight="500" FontFamily="{DynamicResource FontMono}"
+                                                           FontSize="13" FontWeight="500" FontFamily="{DynamicResource FontBody}"
                                                            Foreground="{DynamicResource TextPrimary}"
                                                            TextDecorations="{Binding IsCompleted, Converter={StaticResource BooleanToTextDecorationsConverter}}" />
                                                 
