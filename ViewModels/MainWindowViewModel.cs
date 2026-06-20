@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Threading;
 using WorkLedger_Client.Models;
 using WorkLedger_Client.Services;
 using CommunityToolkit.Mvvm.Input;
@@ -74,6 +75,7 @@ namespace WorkLedger_Client.ViewModels
 
         private readonly SettingsService? _settingsService;
         private readonly ThemeService? _themeService;
+        private CancellationTokenSource? _autosaveCts;
 
         public System.Collections.ObjectModel.ObservableCollection<string> ThemeOptions { get; } = new System.Collections.ObjectModel.ObservableCollection<string> { "System", "Light", "Dark" };
 
@@ -147,6 +149,67 @@ namespace WorkLedger_Client.ViewModels
                 await Task.Delay(2000);
                 SaveConfirmationMessage = string.Empty;
             }
+        }
+
+        // Autosave: debounce changes and persist automatically
+        partial void OnSelectedThemeChanged(string value)
+        {
+            TriggerAutosave();
+        }
+
+        partial void OnSqliteFilePathChanged(string value)
+        {
+            TriggerAutosave();
+        }
+
+        private void TriggerAutosave()
+        {
+            // Cancel previous scheduled save
+            _autosaveCts?.Cancel();
+            _autosaveCts = new CancellationTokenSource();
+            var token = _autosaveCts.Token;
+
+            // Fire-and-forget debounce task
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(800, token); // debounce interval
+                    if (token.IsCancellationRequested) return;
+
+                    // Perform save (no long confirmation)
+                    var settings = new WorkLedger_Client.Services.AppSettings
+                    {
+                        Theme = SelectedTheme,
+                        SqliteFilePath = SqliteFilePath
+                    };
+
+                    _settingsService!.SaveSettings(settings);
+
+                    if (SelectedTheme.Equals("System", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var isDark = Avalonia.Application.Current?.ActualThemeVariant == Avalonia.Styling.ThemeVariant.Dark;
+                        _themeService!.SetTheme(isDark == true ? "Dark" : "Light");
+                    }
+                    else
+                    {
+                        _themeService!.SetTheme(SelectedTheme);
+                    }
+
+                    SaveConfirmationMessage = "Autosaved";
+                    await Task.Delay(1000, token);
+                    if (!token.IsCancellationRequested)
+                        SaveConfirmationMessage = string.Empty;
+                }
+                catch (TaskCanceledException)
+                {
+                    // ignore
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Autosave error: {ex.Message}");
+                }
+            }, token);
         }
 
         public bool IsTaskActive(int taskId, out TimeSpan elapsed)
