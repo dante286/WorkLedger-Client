@@ -14,14 +14,18 @@ namespace WorkLedger_Client.Converters
             if (isArchived)
             {
                 // Return Teal color when archived
-                Avalonia.Application.Current.TryGetResource("TealActive", Avalonia.Styling.ThemeVariant.Default, out var teal);
-                return teal ?? Brushes.Teal;
+                var app = Avalonia.Application.Current;
+                if (app != null && app.TryGetResource("TealActive", Avalonia.Styling.ThemeVariant.Default, out var tealObj) && tealObj is IBrush tealBrush)
+                    return tealBrush;
+                return Brushes.Teal;
             }
             else
             {
                 // Return Tertiary text color when not archived
-                Avalonia.Application.Current.TryGetResource("TextTertiary", Avalonia.Styling.ThemeVariant.Default, out var tertiary);
-                return tertiary ?? Brushes.Gray;
+                var app = Avalonia.Application.Current;
+                if (app != null && app.TryGetResource("TextTertiary", Avalonia.Styling.ThemeVariant.Default, out var tertiaryObj) && tertiaryObj is IBrush tertiaryBrush)
+                    return tertiaryBrush;
+                return Brushes.Gray;
             }
         }
 

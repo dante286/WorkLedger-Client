@@ -29,6 +29,8 @@
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
     <PackageReference Include="sqlite-net-pcl" Version="1.9.172" />
     <PackageReference Include="Tmds.DBus.Protocol" Version="0.21.3" />
+    <!-- Force a patched version of the native e_sqlite3 library to avoid known vulnerability (overrides transitive dep). -->
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.50.3" />
   </ItemGroup>
 
   <ItemGroup>
