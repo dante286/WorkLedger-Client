@@ -34,13 +34,23 @@ namespace WorkLedger_Client
                 var appState = new AppStateService();
                 var timerService = new TimerService(localDb, appState);
 
-                // Initialize theme service with system detection
-                var themeService = new ThemeService(desktop);
+                // Initialize settings service and load settings
+                                var settingsService = new SettingsService();
+                                var appSettings = settingsService.LoadSettings();
 
-                desktop.MainWindow = new MainWindow
-                {
-                    DataContext = new MainWindowViewModel(localDb, timerService, appState, themeService),
-                };
+                                // Initialize theme service with system detection
+                                var themeService = new ThemeService(desktop);
+
+                                // Apply persisted theme if user selected one
+                                if (!string.IsNullOrWhiteSpace(appSettings.Theme) && !appSettings.Theme.Equals("System", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    themeService.SetTheme(appSettings.Theme);
+                                }
+
+                                desktop.MainWindow = new MainWindow
+                                {
+                                    DataContext = new MainWindowViewModel(localDb, timerService, appState, themeService, settingsService),
+                                };
             }
 
             base.OnFrameworkInitializationCompleted();

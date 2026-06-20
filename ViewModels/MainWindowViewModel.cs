@@ -72,6 +72,17 @@ namespace WorkLedger_Client.ViewModels
 
         public readonly LocalDbService _localDbService;
 
+        private readonly SettingsService? _settingsService;
+        private readonly ThemeService? _themeService;
+
+        public System.Collections.ObjectModel.ObservableCollection<string> ThemeOptions { get; } = new System.Collections.ObjectModel.ObservableCollection<string> { "System", "Light", "Dark" };
+
+        [ObservableProperty]
+        private string _selectedTheme = "System";
+
+        [ObservableProperty]
+        private string _sqliteFilePath = string.Empty;
+
         public MainWindowViewModel()
         {
             _localDbService = new LocalDbService("workledger.db");
@@ -81,13 +92,50 @@ namespace WorkLedger_Client.ViewModels
             LoadProjects();
         }
 
-        public MainWindowViewModel(LocalDbService localDbService, TimerService timerService, AppStateService appState, ThemeService themeService)
+        public MainWindowViewModel(LocalDbService localDbService, TimerService timerService, AppStateService appState, ThemeService themeService, SettingsService settingsService)
         {
             _localDbService = localDbService;
             _timerService = timerService;
             _appState = appState;
             _timerService.TimerTick += OnTimerTick;
+
+            _themeService = themeService;
+            _settingsService = settingsService;
+
+            // Load persisted settings
+            var settings = _settingsService.LoadSettings();
+            SelectedTheme = string.IsNullOrWhiteSpace(settings.Theme) ? "System" : settings.Theme;
+            SqliteFilePath = settings.SqliteFilePath ?? string.Empty;
+
             LoadProjects();
+        }
+
+        [RelayCommand]
+        private void SaveSettings()
+        {
+            try
+            {
+                var settings = new WorkLedger_Client.Services.AppSettings
+                {
+                    Theme = SelectedTheme,
+                    SqliteFilePath = SqliteFilePath
+                };
+                _settingsService!.SaveSettings(settings);
+
+                if (SelectedTheme.Equals("System", StringComparison.OrdinalIgnoreCase))
+                {
+                    var isDark = Avalonia.Application.Current?.ActualThemeVariant == Avalonia.Styling.ThemeVariant.Dark;
+                    _themeService!.SetTheme(isDark == true ? "Dark" : "Light");
+                }
+                else
+                {
+                    _themeService!.SetTheme(SelectedTheme);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error saving settings: {ex.Message}");
+            }
         }
 
         public bool IsTaskActive(int taskId, out TimeSpan elapsed)

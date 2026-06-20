@@ -489,7 +489,26 @@
                 </StackPanel>
             </Border>
         </TabItem>
+
+        <TabItem Header="Settings">
+            <Border Padding="{DynamicResource SpacingXXLargeThickness}">
+                <StackPanel Spacing="{DynamicResource SpacingXLarge}">
+                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Theme</TextBlock>
+                        <ComboBox Width="160" ItemsSource="{Binding ThemeOptions}" SelectedItem="{Binding SelectedTheme, Mode=TwoWay}" />
+                        <Button Command="{Binding SaveSettingsCommand}" Margin="12,0,0,0">Save</Button>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">SQLite DB File</TextBlock>
+                        <TextBox Width="420" Text="{Binding SqliteFilePath, Mode=TwoWay}" />
+                        <Button Command="{Binding SaveSettingsCommand}" Margin="12,0,0,0">Save</Button>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </TabItem>
     </TabControl>
+
         
         <Border Background="{DynamicResource Surface}" Height="22" BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,0" VerticalAlignment="Bottom">
             <Grid Margin="16,0">
