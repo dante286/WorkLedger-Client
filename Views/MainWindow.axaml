@@ -497,6 +497,7 @@
                         <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Theme</TextBlock>
                         <ComboBox Width="160" ItemsSource="{Binding ThemeOptions}" SelectedItem="{Binding SelectedTheme, Mode=TwoWay}" />
                         <Button Command="{Binding SaveSettingsCommand}" Margin="12,0,0,0">Save</Button>
+                        <TextBlock Text="{Binding SaveConfirmationMessage}" Foreground="{DynamicResource TealActive}" VerticalAlignment="Center" Margin="12,0,0,0" />
                     </StackPanel>
 
                     <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">

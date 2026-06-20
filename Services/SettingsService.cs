@@ -17,7 +17,35 @@ namespace WorkLedger_Client.Services
 
         public SettingsService()
         {
-            var appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            // Choose a cross-platform settings directory with platform-specific preferences:
+            string appData;
+
+            if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
+            {
+                appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            }
+            else if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX))
+            {
+                var home = Environment.GetFolderPath(Environment.SpecialFolder.Personal);
+                appData = Path.Combine(home, "Library", "Application Support");
+            }
+            else if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Linux))
+            {
+                // Prefer XDG_CONFIG_HOME, otherwise ~/.config
+                var xdg = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
+                if (!string.IsNullOrWhiteSpace(xdg))
+                    appData = xdg;
+                else
+                    appData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Personal), ".config");
+            }
+            else
+            {
+                // Fallback to LocalApplicationData or Personal
+                appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                if (string.IsNullOrWhiteSpace(appData))
+                    appData = Environment.GetFolderPath(Environment.SpecialFolder.Personal);
+            }
+
             var dir = Path.Combine(appData, "WorkLedger");
             if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
             _settingsPath = Path.Combine(dir, "settings.json");

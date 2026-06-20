@@ -83,6 +83,9 @@ namespace WorkLedger_Client.ViewModels
         [ObservableProperty]
         private string _sqliteFilePath = string.Empty;
 
+        [ObservableProperty]
+        private string _saveConfirmationMessage = string.Empty;
+
         public MainWindowViewModel()
         {
             _localDbService = new LocalDbService("workledger.db");
@@ -111,7 +114,7 @@ namespace WorkLedger_Client.ViewModels
         }
 
         [RelayCommand]
-        private void SaveSettings()
+        private async Task SaveSettings()
         {
             try
             {
@@ -131,10 +134,18 @@ namespace WorkLedger_Client.ViewModels
                 {
                     _themeService!.SetTheme(SelectedTheme);
                 }
+
+                SaveConfirmationMessage = "Settings saved";
+                // Clear message after short delay
+                await Task.Delay(1800);
+                SaveConfirmationMessage = string.Empty;
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Error saving settings: {ex.Message}");
+                SaveConfirmationMessage = "Failed to save settings";
+                await Task.Delay(2000);
+                SaveConfirmationMessage = string.Empty;
             }
         }
 
