@@ -75,6 +75,7 @@ namespace WorkLedger_Client.ViewModels
 
         private readonly SettingsService? _settingsService;
         private readonly ThemeService? _themeService;
+        private readonly ToastService? _toastService;
         private CancellationTokenSource? _autosaveCts;
 
         public System.Collections.ObjectModel.ObservableCollection<string> ThemeOptions { get; } = new System.Collections.ObjectModel.ObservableCollection<string> { "System", "Light", "Dark" };
@@ -85,9 +86,7 @@ namespace WorkLedger_Client.ViewModels
         [ObservableProperty]
         private string _sqliteFilePath = string.Empty;
 
-        [ObservableProperty]
-        private string _saveConfirmationMessage = string.Empty;
-
+        
         public MainWindowViewModel()
         {
             _localDbService = new LocalDbService("workledger.db");
@@ -137,17 +136,12 @@ namespace WorkLedger_Client.ViewModels
                     _themeService!.SetTheme(SelectedTheme);
                 }
 
-                SaveConfirmationMessage = "Settings saved";
-                // Clear message after short delay
-                await Task.Delay(1800);
-                SaveConfirmationMessage = string.Empty;
+                _toastService?.ShowToast("Settings saved", 1400);
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Error saving settings: {ex.Message}");
-                SaveConfirmationMessage = "Failed to save settings";
-                await Task.Delay(2000);
-                SaveConfirmationMessage = string.Empty;
+                _toastService?.ShowToast("Failed to save settings", 1600);
             }
         }
 
@@ -196,10 +190,7 @@ namespace WorkLedger_Client.ViewModels
                         _themeService!.SetTheme(SelectedTheme);
                     }
 
-                    SaveConfirmationMessage = "Autosaved";
-                    await Task.Delay(1000, token);
-                    if (!token.IsCancellationRequested)
-                        SaveConfirmationMessage = string.Empty;
+                    _toastService?.ShowToast("Autosaved", 1000);
                 }
                 catch (TaskCanceledException)
                 {

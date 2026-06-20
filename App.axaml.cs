@@ -47,9 +47,12 @@ namespace WorkLedger_Client
                                     themeService.SetTheme(appSettings.Theme);
                                 }
 
+                                // Initialize toast service for transient messages
+                                var toastService = new ToastService(desktop);
+
                                 desktop.MainWindow = new MainWindow
                                 {
-                                    DataContext = new MainWindowViewModel(localDb, timerService, appState, themeService, settingsService),
+                                    DataContext = new MainWindowViewModel(localDb, timerService, appState, themeService, settingsService, toastService),
                                 };
             }
 

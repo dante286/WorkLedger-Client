@@ -1,0 +1,16 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="WorkLedger_Client.Views.ToastWindow"
+        Width="260" Height="48"
+        CanResize="False"
+        WindowStartupLocation="Manual"
+        ShowInTaskbar="False"
+        Topmost="True"
+        TransparencyLevelHint="AcrylicBlur"
+        Background="Transparent"
+        Padding="0">
+
+  <Border CornerRadius="6" Background="#DD1E2938" Padding="10" Margin="8">
+    <TextBlock Name="MessageText" Foreground="White" FontSize="12" TextWrapping="Wrap" />
+  </Border>
+</Window>
