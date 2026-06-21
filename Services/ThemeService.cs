@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Styling;
 using Avalonia.Markup.Xaml.Styling;
+using Avalonia.Threading;
 using System;
 using System.Linq;
 
@@ -64,6 +65,13 @@ namespace WorkLedger_Client.Services
         /// </summary>
         public void SetTheme(string themeName)
         {
+            // Ensure UI operations execute on the UI thread
+            if (!Dispatcher.UIThread.CheckAccess())
+            {
+                Dispatcher.UIThread.Post(() => SetTheme(themeName));
+                return;
+            }
+
             var isDark = themeName.Equals("Dark", StringComparison.OrdinalIgnoreCase);
             _darkMode = isDark;
 
@@ -92,7 +100,7 @@ namespace WorkLedger_Client.Services
 
                 // Add the new theme
                 mergedDictionaries.Add(theme);
-                
+
                 // Also update the theme variant
                 _app.RequestedThemeVariant = isDark ? ThemeVariant.Dark : ThemeVariant.Light;
             }
