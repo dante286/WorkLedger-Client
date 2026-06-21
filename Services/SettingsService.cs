@@ -51,6 +51,11 @@ namespace WorkLedger_Client.Services
             _settingsPath = Path.Combine(dir, "settings.json");
         }
 
+        // Expose the settings path and directory so other services can place related files next to settings.json.
+        public string SettingsPath => _settingsPath;
+
+        public string SettingsDirectory => Path.GetDirectoryName(_settingsPath) ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+
         public AppSettings LoadSettings()
         {
             try

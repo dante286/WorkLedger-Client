@@ -27,33 +27,47 @@ namespace WorkLedger_Client
                 // More info: https://docs.avaloniaui.net/docs/guides/development-guides/data-validation#manage-validationplugins
                 DisableAvaloniaDataAnnotationValidation();
 
+                // Initialize settings service and load settings
+                var settingsService = new SettingsService();
+                var appSettings = settingsService.LoadSettings();
+
+                // Determine SQLite DB path. If user has set a custom path in settings, use it.
+                // Otherwise default to the same directory where settings.json lives (per-platform config directory)
+                string dbPath;
+                if (!string.IsNullOrWhiteSpace(appSettings.SqliteFilePath))
+                {
+                    dbPath = appSettings.SqliteFilePath;
+                }
+                else
+                {
+                    var settingsDir = settingsService.SettingsDirectory;
+                    dbPath = Path.Combine(settingsDir, "workledger.db");
+                    var dbDir = Path.GetDirectoryName(dbPath);
+                    if (!string.IsNullOrEmpty(dbDir) && !Directory.Exists(dbDir))
+                        Directory.CreateDirectory(dbDir);
+                }
+
                 // Initialize services
-                var appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-                var dbPath = Path.Combine(appData, "workledger.db");
                 var localDb = new LocalDbService(dbPath);
                 var appState = new AppStateService();
                 var timerService = new TimerService(localDb, appState);
 
-                // Initialize settings service and load settings
-                                var settingsService = new SettingsService();
-                                var appSettings = settingsService.LoadSettings();
+                // Initialize theme service with system detection
+                var themeService = new ThemeService(desktop);
 
-                                // Initialize theme service with system detection
-                                var themeService = new ThemeService(desktop);
+                // Apply persisted theme if user selected one
+                if (!string.IsNullOrWhiteSpace(appSettings.Theme) && !appSettings.Theme.Equals("System", StringComparison.OrdinalIgnoreCase))
+                {
+                    themeService.SetTheme(appSettings.Theme);
+                }
 
-                                // Apply persisted theme if user selected one
-                                if (!string.IsNullOrWhiteSpace(appSettings.Theme) && !appSettings.Theme.Equals("System", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    themeService.SetTheme(appSettings.Theme);
-                                }
+                // Initialize toast service for transient messages
+                var toastService = new ToastService(desktop);
 
-                                // Initialize toast service for transient messages
-                                var toastService = new ToastService(desktop);
-
-                                desktop.MainWindow = new MainWindow
-                                {
-                                    DataContext = new MainWindowViewModel(localDb, timerService, appState, themeService, settingsService, toastService),
-                                };
+                desktop.MainWindow = new MainWindow
+                {
+                    DataContext = new MainWindowViewModel(localDb, timerService, appState, themeService, settingsService, toastService),
+                };
             }
 
             base.OnFrameworkInitializationCompleted();
