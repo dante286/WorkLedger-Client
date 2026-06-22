@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/dante286/WorkLedger-Client/compare/v1.0.1...v1.0.2) (2026-06-22)
+
+
+### Bug Fixes
+
+* testing github builds ([e4ea07e](https://github.com/dante286/WorkLedger-Client/commit/e4ea07e693d4c9b665fb5e464df9a0034038c5bb))
+
 ## [1.0.1](https://github.com/dante286/WorkLedger-Client/compare/v1.0.0...v1.0.1) (2026-06-22)
 
 
