@@ -3,6 +3,12 @@
 on:
   push:
     tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag to package (for example v1.0.1)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -34,8 +40,8 @@ jobs:
       - name: Get version from event
         id: version
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            TAG_NAME="${{ github.event.release.tag_name }}"
+          if [ -n "${{ inputs.tag_name }}" ]; then
+            TAG_NAME="${{ inputs.tag_name }}"
           else
             TAG_NAME="${GITHUB_REF#refs/tags/}"
           fi
@@ -215,12 +221,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag_name || github.ref }}
 
       - name: Get tag name
         id: tag
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            TAG_NAME="${{ github.event.release.tag_name }}"
+          if [ -n "${{ inputs.tag_name }}" ]; then
+            TAG_NAME="${{ inputs.tag_name }}"
           else
             TAG_NAME="${GITHUB_REF#refs/tags/}"
           fi
