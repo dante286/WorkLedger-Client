@@ -1,7 +1,8 @@
-﻿﻿using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Threading;
@@ -86,7 +87,7 @@ namespace WorkLedger_Client.ViewModels
         private string _selectedTheme = "System";
 
         [ObservableProperty]
-        private string _sqliteFilePath = string.Empty;
+        private string _dataDirectory = string.Empty;
 
         
         public MainWindowViewModel()
@@ -111,7 +112,7 @@ namespace WorkLedger_Client.ViewModels
             // Load persisted settings
             var settings = _settingsService.LoadSettings();
             SelectedTheme = string.IsNullOrWhiteSpace(settings.Theme) ? "System" : settings.Theme;
-            SqliteFilePath = settings.SqliteFilePath ?? string.Empty;
+            DataDirectory = settings.DataDirectory ?? string.Empty;
 
             LoadProjects();
         }
@@ -124,7 +125,7 @@ namespace WorkLedger_Client.ViewModels
                 var settings = new WorkLedger_Client.Services.AppSettings
                 {
                     Theme = SelectedTheme,
-                    SqliteFilePath = SqliteFilePath
+                    DataDirectory = DataDirectory
                 };
                 _settingsService!.SaveSettings(settings);
 
@@ -153,7 +154,7 @@ namespace WorkLedger_Client.ViewModels
             TriggerAutosave();
         }
 
-        partial void OnSqliteFilePathChanged(string value)
+        partial void OnDataDirectoryChanged(string value)
         {
             TriggerAutosave();
         }
@@ -177,7 +178,7 @@ namespace WorkLedger_Client.ViewModels
                     var settings = new WorkLedger_Client.Services.AppSettings
                     {
                         Theme = SelectedTheme,
-                        SqliteFilePath = SqliteFilePath
+                        DataDirectory = DataDirectory
                     };
 
                     _settingsService!.SaveSettings(settings);
@@ -562,26 +563,47 @@ namespace WorkLedger_Client.ViewModels
         }
 
         [RelayCommand]
-        private async Task BrowseSqliteFileAsync()
+        private async Task BrowseDataDirectoryAsync()
         {
             var desktop = Avalonia.Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime;
             if (desktop?.MainWindow == null) return;
 
-            var dlg = new OpenFileDialog
+            try
             {
-                Title = "Select SQLite DB File",
-                AllowMultiple = false,
-                Filters = new List<FileDialogFilter>
+                var dlg = new OpenFolderDialog
                 {
-                    new FileDialogFilter { Name = "SQLite Database", Extensions = new List<string> { "db", "sqlite", "sqlite3" } },
-                    new FileDialogFilter { Name = "All Files", Extensions = new List<string> { "*" } }
-                }
-            };
+                    Title = "Select Data Directory for WorkLedger"
+                };
 
-            var result = await dlg.ShowAsync(desktop.MainWindow);
-            if (result != null && result.Length > 0)
+                var result = await dlg.ShowAsync(desktop.MainWindow);
+                if (!string.IsNullOrWhiteSpace(result))
+                {
+                    // Validate write permissions to the selected directory
+                    try
+                    {
+                        var testFile = Path.Combine(result, ".workledger_test");
+                        File.WriteAllText(testFile, "test");
+                        File.Delete(testFile);
+
+                        DataDirectory = result;
+                        _toastService?.ShowToast("Data directory set. Restart the app to migrate data.", 2000);
+                    }
+                    catch (UnauthorizedAccessException)
+                    {
+                        _toastService?.ShowToast("Access denied: Cannot write to the selected location", 2000);
+                        System.Diagnostics.Debug.WriteLine("Access denied when selecting data directory");
+                    }
+                    catch (Exception ex)
+                    {
+                        _toastService?.ShowToast($"Cannot write to this location: {ex.Message}", 2000);
+                        System.Diagnostics.Debug.WriteLine($"Error validating data directory: {ex.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
             {
-                SqliteFilePath = result[0];
+                _toastService?.ShowToast("Failed to browse for data directory", 2000);
+                System.Diagnostics.Debug.WriteLine($"Error browsing for data directory: {ex.Message}");
             }
         }
     }

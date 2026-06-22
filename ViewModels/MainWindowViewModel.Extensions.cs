@@ -19,7 +19,7 @@ namespace WorkLedger_Client.ViewModels
             // Load persisted settings
             var settings = _settingsService.LoadSettings();
             SelectedTheme = string.IsNullOrWhiteSpace(settings.Theme) ? "System" : settings.Theme;
-            SqliteFilePath = settings.SqliteFilePath ?? string.Empty;
+            DataDirectory = settings.DataDirectory ?? string.Empty;
 
             LoadProjects();
         }

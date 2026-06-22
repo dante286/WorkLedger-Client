@@ -27,25 +27,34 @@ namespace WorkLedger_Client
                 // More info: https://docs.avaloniaui.net/docs/guides/development-guides/data-validation#manage-validationplugins
                 DisableAvaloniaDataAnnotationValidation();
 
-                // Initialize settings service and load settings
+                // Initialize settings service with default data directory
                 var settingsService = new SettingsService();
                 var appSettings = settingsService.LoadSettings();
 
-                // Determine SQLite DB path. If user has set a custom path in settings, use it.
-                // Otherwise default to the same directory where settings.json lives (per-platform config directory)
-                string dbPath;
-                if (!string.IsNullOrWhiteSpace(appSettings.SqliteFilePath))
+                // If user has configured a custom data directory, reinitialize the settings service with it
+                string dataDirectory = settingsService.DataDirectory;
+                if (!string.IsNullOrWhiteSpace(appSettings.DataDirectory) && !appSettings.DataDirectory.Equals(dataDirectory, StringComparison.OrdinalIgnoreCase))
                 {
-                    dbPath = appSettings.SqliteFilePath;
+                    dataDirectory = appSettings.DataDirectory;
+                    settingsService = new SettingsService(dataDirectory);
+                    appSettings = settingsService.LoadSettings();
                 }
-                else
+
+                // Attempt to migrate data from old default location if needed
+                var oldDefaultDir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "WorkLedger"
+                );
+                if (Directory.Exists(oldDefaultDir) && !dataDirectory.Equals(oldDefaultDir, StringComparison.OrdinalIgnoreCase))
                 {
-                    var settingsDir = settingsService.SettingsDirectory;
-                    dbPath = Path.Combine(settingsDir, SettingsService.DefaultDbFileName);
-                    var dbDir = Path.GetDirectoryName(dbPath);
-                    if (!string.IsNullOrEmpty(dbDir) && !Directory.Exists(dbDir))
-                        Directory.CreateDirectory(dbDir);
+                    if (settingsService.MigrateDataIfNeeded(dataDirectory, oldDefaultDir))
+                    {
+                        System.Diagnostics.Debug.WriteLine("Data migration completed successfully");
+                    }
                 }
+
+                // Database path is now in the data directory
+                string dbPath = settingsService.DatabasePath;
 
                 // Initialize services
                 var localDb = new LocalDbService(dbPath);

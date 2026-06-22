@@ -8,18 +8,36 @@ namespace WorkLedger_Client.Services
     public class AppSettings
     {
         public string Theme { get; set; } = "System"; // "System", "Light", "Dark"
-        public string SqliteFilePath { get; set; } = string.Empty;
+        public string DataDirectory { get; set; } = string.Empty;
     }
 
     public class SettingsService
     {
+        private readonly string _dataDirectory;
         private readonly string _settingsPath;
 
         public const string DefaultDbFileName = "workledger.db";
+        public const string SettingsFileName = "settings.json";
 
-        public SettingsService()
+        public SettingsService(string? customDataDirectory = null)
         {
-            // Choose a cross-platform settings directory with platform-specific preferences:
+            // Determine the data directory
+            _dataDirectory = customDataDirectory ?? GetDefaultDataDirectory();
+
+            // Ensure the data directory exists
+            if (!Directory.Exists(_dataDirectory))
+            {
+                Directory.CreateDirectory(_dataDirectory);
+            }
+
+            _settingsPath = Path.Combine(_dataDirectory, SettingsFileName);
+        }
+
+        /// <summary>
+        /// Gets the default data directory based on platform conventions.
+        /// </summary>
+        private static string GetDefaultDataDirectory()
+        {
             string appData;
 
             if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
@@ -48,15 +66,15 @@ namespace WorkLedger_Client.Services
                     appData = Environment.GetFolderPath(Environment.SpecialFolder.Personal);
             }
 
-            var dir = Path.Combine(appData, "WorkLedger");
-            if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-            _settingsPath = Path.Combine(dir, "settings.json");
+            return Path.Combine(appData, "WorkLedger");
         }
 
-        // Expose the settings path and directory so other services can place related files next to settings.json.
+        // Expose data directory and paths
+        public string DataDirectory => _dataDirectory;
+
         public string SettingsPath => _settingsPath;
 
-        public string SettingsDirectory => Path.GetDirectoryName(_settingsPath) ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        public string DatabasePath => Path.Combine(_dataDirectory, DefaultDbFileName);
 
         public AppSettings LoadSettings()
         {
@@ -66,7 +84,7 @@ namespace WorkLedger_Client.Services
                 {
                     var defaults = new AppSettings
                     {
-                        SqliteFilePath = Path.Combine(SettingsDirectory, DefaultDbFileName)
+                        DataDirectory = _dataDirectory
                     };
                     SaveSettings(defaults);
                     return defaults;
@@ -75,10 +93,10 @@ namespace WorkLedger_Client.Services
                 var json = File.ReadAllText(_settingsPath);
                 var settings = JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
 
-                // Backfill missing db path for older settings files so the UI always has a value.
-                if (string.IsNullOrWhiteSpace(settings.SqliteFilePath))
+                // Backfill missing data directory for older settings files
+                if (string.IsNullOrWhiteSpace(settings.DataDirectory))
                 {
-                    settings.SqliteFilePath = Path.Combine(SettingsDirectory, DefaultDbFileName);
+                    settings.DataDirectory = _dataDirectory;
                     SaveSettings(settings);
                 }
 
@@ -88,7 +106,7 @@ namespace WorkLedger_Client.Services
             {
                 return new AppSettings
                 {
-                    SqliteFilePath = Path.Combine(SettingsDirectory, DefaultDbFileName)
+                    DataDirectory = _dataDirectory
                 };
             }
         }
@@ -103,6 +121,109 @@ namespace WorkLedger_Client.Services
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Failed to save settings: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Validates and creates the data directory.
+        /// Returns the validated path if successful, or a fallback default path if validation fails.
+        /// </summary>
+        public string ValidateDataDirectory(string dataDirectoryPath)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(dataDirectoryPath))
+                {
+                    return _dataDirectory;
+                }
+
+                // Ensure the directory exists
+                if (!Directory.Exists(dataDirectoryPath))
+                {
+                    Directory.CreateDirectory(dataDirectoryPath);
+                    System.Diagnostics.Debug.WriteLine($"Created data directory: {dataDirectoryPath}");
+                }
+
+                return dataDirectoryPath;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to validate data directory '{dataDirectoryPath}': {ex.Message}");
+                return _dataDirectory;
+            }
+        }
+
+        /// <summary>
+        /// Migrates app data (settings and database) from the old default location to a new data directory.
+        /// </summary>
+        public bool MigrateDataIfNeeded(string newDataDirectory, string? oldDataDirectory = null)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(newDataDirectory))
+                    return false;
+
+                var oldDir = oldDataDirectory ?? GetDefaultDataDirectory();
+
+                // If directories are the same, no migration needed
+                if (oldDir.Equals(newDataDirectory, StringComparison.OrdinalIgnoreCase))
+                    return false;
+
+                // If the old directory doesn't exist, no migration needed
+                if (!Directory.Exists(oldDir))
+                {
+                    System.Diagnostics.Debug.WriteLine($"Old data directory not found at '{oldDir}', no migration needed");
+                    return false;
+                }
+
+                // Ensure the new directory exists
+                if (!Directory.Exists(newDataDirectory))
+                {
+                    Directory.CreateDirectory(newDataDirectory);
+                    System.Diagnostics.Debug.WriteLine($"Created new data directory: {newDataDirectory}");
+                }
+
+                bool migratedAny = false;
+
+                // Migrate settings.json
+                var oldSettingsPath = Path.Combine(oldDir, SettingsFileName);
+                var newSettingsPath = Path.Combine(newDataDirectory, SettingsFileName);
+                if (File.Exists(oldSettingsPath))
+                {
+                    File.Copy(oldSettingsPath, newSettingsPath, overwrite: true);
+                    System.Diagnostics.Debug.WriteLine($"Migrated settings from '{oldSettingsPath}' to '{newSettingsPath}'");
+                    migratedAny = true;
+                }
+
+                // Migrate database
+                var oldDbPath = Path.Combine(oldDir, DefaultDbFileName);
+                var newDbPath = Path.Combine(newDataDirectory, DefaultDbFileName);
+                if (File.Exists(oldDbPath))
+                {
+                    // Create backup if database already exists at destination
+                    if (File.Exists(newDbPath))
+                    {
+                        var backupPath = newDbPath + ".backup";
+                        File.Copy(newDbPath, backupPath, overwrite: true);
+                        System.Diagnostics.Debug.WriteLine($"Created backup of existing database: {backupPath}");
+                    }
+
+                    File.Copy(oldDbPath, newDbPath, overwrite: true);
+                    System.Diagnostics.Debug.WriteLine($"Migrated database from '{oldDbPath}' to '{newDbPath}'");
+                    migratedAny = true;
+                }
+
+                if (migratedAny)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Data migration completed from '{oldDir}' to '{newDataDirectory}'");
+                }
+
+                return migratedAny;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to migrate data: {ex.Message}");
+                return false;
             }
         }
     }
