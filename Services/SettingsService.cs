@@ -15,6 +15,8 @@ namespace WorkLedger_Client.Services
     {
         private readonly string _settingsPath;
 
+        public const string DefaultDbFileName = "workledger.db";
+
         public SettingsService()
         {
             // Choose a cross-platform settings directory with platform-specific preferences:
@@ -62,18 +64,32 @@ namespace WorkLedger_Client.Services
             {
                 if (!File.Exists(_settingsPath))
                 {
-                    var defaults = new AppSettings();
+                    var defaults = new AppSettings
+                    {
+                        SqliteFilePath = Path.Combine(SettingsDirectory, DefaultDbFileName)
+                    };
                     SaveSettings(defaults);
                     return defaults;
                 }
 
                 var json = File.ReadAllText(_settingsPath);
-                var settings = JsonSerializer.Deserialize<AppSettings>(json);
-                return settings ?? new AppSettings();
+                var settings = JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+
+                // Backfill missing db path for older settings files so the UI always has a value.
+                if (string.IsNullOrWhiteSpace(settings.SqliteFilePath))
+                {
+                    settings.SqliteFilePath = Path.Combine(SettingsDirectory, DefaultDbFileName);
+                    SaveSettings(settings);
+                }
+
+                return settings;
             }
             catch (Exception)
             {
-                return new AppSettings();
+                return new AppSettings
+                {
+                    SqliteFilePath = Path.Combine(SettingsDirectory, DefaultDbFileName)
+                };
             }
         }
 

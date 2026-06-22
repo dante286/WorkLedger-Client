@@ -41,7 +41,7 @@ namespace WorkLedger_Client
                 else
                 {
                     var settingsDir = settingsService.SettingsDirectory;
-                    dbPath = Path.Combine(settingsDir, "workledger.db");
+                    dbPath = Path.Combine(settingsDir, SettingsService.DefaultDbFileName);
                     var dbDir = Path.GetDirectoryName(dbPath);
                     if (!string.IsNullOrEmpty(dbDir) && !Directory.Exists(dbDir))
                         Directory.CreateDirectory(dbDir);

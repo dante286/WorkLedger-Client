@@ -1,4 +1,5 @@
 ﻿﻿using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
@@ -8,6 +9,7 @@ using WorkLedger_Client.Models;
 using WorkLedger_Client.Services;
 using CommunityToolkit.Mvvm.Input;
 using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using WorkLedger_Client.Views;
 using System.Runtime.CompilerServices;
@@ -557,6 +559,30 @@ namespace WorkLedger_Client.ViewModels
             task.IsArchived = false;
             await _localDbService.SaveTaskAsync(task);
             await LoadTasksAsync();
+        }
+
+        [RelayCommand]
+        private async Task BrowseSqliteFileAsync()
+        {
+            var desktop = Avalonia.Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime;
+            if (desktop?.MainWindow == null) return;
+
+            var dlg = new OpenFileDialog
+            {
+                Title = "Select SQLite DB File",
+                AllowMultiple = false,
+                Filters = new List<FileDialogFilter>
+                {
+                    new FileDialogFilter { Name = "SQLite Database", Extensions = new List<string> { "db", "sqlite", "sqlite3" } },
+                    new FileDialogFilter { Name = "All Files", Extensions = new List<string> { "*" } }
+                }
+            };
+
+            var result = await dlg.ShowAsync(desktop.MainWindow);
+            if (result != null && result.Length > 0)
+            {
+                SqliteFilePath = result[0];
+            }
         }
     }
 }
