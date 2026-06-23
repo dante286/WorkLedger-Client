@@ -50,6 +50,8 @@ jobs:
             TAG_NAME="${GITHUB_REF#refs/tags/}"
           fi
 
+          TAG_NAME="${TAG_NAME#${TAG_NAME%%[![:space:]]*}}"
+          TAG_NAME="${TAG_NAME%${TAG_NAME##*[![:space:]]}}"
           echo "version=${TAG_NAME#v}" >> $GITHUB_OUTPUT
         shell: bash
 
