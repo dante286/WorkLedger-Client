@@ -1,6 +1,8 @@
 ﻿name: Package and Release WorkLedger
 
 on:
+  release:
+    types: [published]
   push:
     tags: [ 'v*' ]
   workflow_dispatch:
@@ -42,6 +44,8 @@ jobs:
         run: |
           if [ -n "${{ inputs.tag_name }}" ]; then
             TAG_NAME="${{ inputs.tag_name }}"
+          elif [ -n "${{ github.event.release.tag_name }}" ]; then
+            TAG_NAME="${{ github.event.release.tag_name }}"
           else
             TAG_NAME="${GITHUB_REF#refs/tags/}"
           fi
@@ -222,13 +226,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag_name || github.ref }}
+          ref: ${{ inputs.tag_name || github.event.release.tag_name || github.ref }}
 
       - name: Get tag name
         id: tag
         run: |
           if [ -n "${{ inputs.tag_name }}" ]; then
             TAG_NAME="${{ inputs.tag_name }}"
+          elif [ -n "${{ github.event.release.tag_name }}" ]; then
+            TAG_NAME="${{ github.event.release.tag_name }}"
           else
             TAG_NAME="${GITHUB_REF#refs/tags/}"
           fi

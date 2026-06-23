@@ -49,8 +49,4 @@
     <AvaloniaResource Include="Assets\themes\*.xaml" />
     <AvaloniaResource Include="Assets\fonts\*.ttf" />
   </ItemGroup>
-
-  <ItemGroup>
-    <None Include=".github\workflows\release-build.yml" />
-  </ItemGroup>
 </Project>
