@@ -1,0 +1,103 @@
+name: Release WorkLedger
+
+on:
+  workflow_run:
+    workflows: ["Package WorkLedger"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag to package (for example v1.0.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag_name || github.event.workflow_run.head_sha }}
+
+      - name: Get tag name
+        id: tag
+        run: |
+          if [ -n "${{ inputs.tag_name }}" ]; then
+            TAG_NAME="${{ inputs.tag_name }}"
+          elif [ -f ./artifacts/workledger-release-metadata/tag_name.txt ]; then
+            TAG_NAME="$(cat ./artifacts/workledger-release-metadata/tag_name.txt)"
+          else
+            echo "Unable to determine release tag from workflow inputs or release metadata" >&2
+            exit 1
+          fi
+
+          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Download packaged artifacts
+        if: ${{ github.event_name == 'workflow_run' }}
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const runId = context.payload.workflow_run.id;
+            const { owner, repo } = context.repo;
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+              owner,
+              repo,
+              run_id: runId,
+              per_page: 100,
+            });
+
+            if (artifacts.length === 0) {
+              core.setFailed(`No artifacts found for workflow run ${runId}`);
+              return;
+            }
+
+            const artifactsDir = path.join(process.env.GITHUB_WORKSPACE, 'artifacts');
+            fs.mkdirSync(artifactsDir, { recursive: true });
+
+            for (const artifact of artifacts) {
+              const download = await github.rest.actions.downloadArtifact({
+                owner,
+                repo,
+                artifact_id: artifact.id,
+                archive_format: 'zip',
+              });
+
+              const artifactPath = path.join(artifactsDir, `${artifact.name}.zip`);
+              fs.writeFileSync(artifactPath, Buffer.from(download.data));
+            }
+
+      - name: Extract packaged artifacts
+        if: ${{ github.event_name == 'workflow_run' }}
+        run: |
+          shopt -s nullglob
+          for artifact in ./artifacts/*.zip; do
+            artifact_name="$(basename "${artifact}" .zip)"
+            mkdir -p "./artifacts/${artifact_name}"
+            unzip -o "${artifact}" -d "./artifacts/${artifact_name}"
+          done
+        shell: bash
+
+      - name: Download manually selected artifacts
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: actions/download-artifact@v8
+        with:
+          path: ./artifacts
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.tag.outputs.tag_name }}
+          append_body: true
+          generate_release_notes: false
+          make_latest: false
+          fail_on_unmatched_files: true
+          files: ./artifacts/**/*
