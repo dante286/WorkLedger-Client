@@ -23,10 +23,10 @@ jobs:
         os: [windows-latest, ubuntu-latest, macos-latest]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
@@ -201,14 +201,14 @@ jobs:
 
       - name: Upload Windows Artifact
         if: matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: workledger-windows
           path: ./WorkLedger-setup.exe
 
       - name: Upload Linux Artifact
         if: matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: workledger-linux
           path: |
@@ -217,7 +217,7 @@ jobs:
 
       - name: Upload macOS Artifact
         if: matrix.os == 'macos-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: workledger-macos
           path: ./WorkLedger.dmg
@@ -227,7 +227,7 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'release' || startsWith(github.ref, 'refs/tags/') || inputs.tag_name != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag_name || github.event.release.tag_name || github.ref }}
 
@@ -246,12 +246,12 @@ jobs:
         shell: bash
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: ./artifacts
 
       - name: Upload Release Assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.tag_name }}
           append_body: true
