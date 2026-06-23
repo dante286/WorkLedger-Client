@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.4](https://github.com/dante286/WorkLedger-Client/compare/v1.0.3...v1.0.4) (2026-06-23)
+
+
+### Bug Fixes
+
+* ubuntu builds failing ([dbb1b51](https://github.com/dante286/WorkLedger-Client/commit/dbb1b5104297d7f734aec71f16ab7d2ccd0f37f8))
+
 ## [1.0.3](https://github.com/dante286/WorkLedger-Client/compare/v1.0.2...v1.0.3) (2026-06-23)
 
 
