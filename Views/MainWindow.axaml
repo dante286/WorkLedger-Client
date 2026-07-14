@@ -520,6 +520,11 @@
                             <TextBlock Text="Save" />
                         </Button>
                     </StackPanel>
+                    
+                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Application version</TextBlock>
+                        <TextBlock Width="160" VerticalAlignment="Center" Text="{Binding ApplicationVersion}" />
+                    </StackPanel>
                 </StackPanel>
             </Border>
         </TabItem>

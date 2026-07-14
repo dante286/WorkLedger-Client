@@ -20,6 +20,9 @@ namespace WorkLedger_Client.ViewModels
             var settings = _settingsService.LoadSettings();
             SelectedTheme = string.IsNullOrWhiteSpace(settings.Theme) ? "System" : settings.Theme;
             DataDirectory = settings.DataDirectory ?? string.Empty;
+            ApplicationVersion = string.IsNullOrWhiteSpace(settings.ApplicationVersion)
+                ? WorkLedger_Client.Services.AppSettings.CurrentApplicationVersion
+                : settings.ApplicationVersion;
 
             LoadProjects();
         }

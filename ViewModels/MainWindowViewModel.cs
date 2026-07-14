@@ -89,6 +89,9 @@ namespace WorkLedger_Client.ViewModels
         [ObservableProperty]
         private string _dataDirectory = string.Empty;
 
+        [ObservableProperty]
+        private string _applicationVersion = WorkLedger_Client.Services.AppSettings.CurrentApplicationVersion;
+
         
         public MainWindowViewModel()
         {
@@ -113,6 +116,9 @@ namespace WorkLedger_Client.ViewModels
             var settings = _settingsService.LoadSettings();
             SelectedTheme = string.IsNullOrWhiteSpace(settings.Theme) ? "System" : settings.Theme;
             DataDirectory = settings.DataDirectory ?? string.Empty;
+            ApplicationVersion = string.IsNullOrWhiteSpace(settings.ApplicationVersion)
+                ? WorkLedger_Client.Services.AppSettings.CurrentApplicationVersion
+                : settings.ApplicationVersion;
 
             LoadProjects();
         }
@@ -125,7 +131,8 @@ namespace WorkLedger_Client.ViewModels
                 var settings = new WorkLedger_Client.Services.AppSettings
                 {
                     Theme = SelectedTheme,
-                    DataDirectory = DataDirectory
+                    DataDirectory = DataDirectory,
+                    ApplicationVersion = ApplicationVersion
                 };
                 _settingsService!.SaveSettings(settings);
 
@@ -178,7 +185,8 @@ namespace WorkLedger_Client.ViewModels
                     var settings = new WorkLedger_Client.Services.AppSettings
                     {
                         Theme = SelectedTheme,
-                        DataDirectory = DataDirectory
+                        DataDirectory = DataDirectory,
+                        ApplicationVersion = ApplicationVersion
                     };
 
                     _settingsService!.SaveSettings(settings);
@@ -577,26 +585,26 @@ namespace WorkLedger_Client.ViewModels
 
                 var result = await dlg.ShowAsync(desktop.MainWindow);
                 if (!string.IsNullOrWhiteSpace(result))
-                {
-                    // Validate write permissions to the selected directory
-                    try
                     {
+                        // Validate write permissions to the selected directory
+                        try
+                        {
                         var testFile = Path.Combine(result, ".workledger_test");
-                        File.WriteAllText(testFile, "test");
-                        File.Delete(testFile);
+                            File.WriteAllText(testFile, "test");
+                            File.Delete(testFile);
 
                         DataDirectory = result;
-                        _toastService?.ShowToast("Data directory set. Restart the app to migrate data.", 2000);
-                    }
-                    catch (UnauthorizedAccessException)
-                    {
-                        _toastService?.ShowToast("Access denied: Cannot write to the selected location", 2000);
-                        System.Diagnostics.Debug.WriteLine("Access denied when selecting data directory");
-                    }
-                    catch (Exception ex)
-                    {
-                        _toastService?.ShowToast($"Cannot write to this location: {ex.Message}", 2000);
-                        System.Diagnostics.Debug.WriteLine($"Error validating data directory: {ex.Message}");
+                            _toastService?.ShowToast("Data directory set. Restart the app to migrate data.", 2000);
+                        }
+                        catch (UnauthorizedAccessException)
+                        {
+                            _toastService?.ShowToast("Access denied: Cannot write to the selected location", 2000);
+                            System.Diagnostics.Debug.WriteLine("Access denied when selecting data directory");
+                        }
+                        catch (Exception ex)
+                        {
+                            _toastService?.ShowToast($"Cannot write to this location: {ex.Message}", 2000);
+                            System.Diagnostics.Debug.WriteLine($"Error validating data directory: {ex.Message}");
                     }
                 }
             }

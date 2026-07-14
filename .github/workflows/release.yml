@@ -24,41 +24,11 @@ jobs:
           ref: ${{ inputs.tag_name || github.event.workflow_run.head_sha }}
       - name: Download packaged artifacts
         if: ${{ github.event_name == 'workflow_run' }}
-        uses: actions/github-script@v8
+        uses: actions/download-artifact@v8
         with:
-          script: |
-            const fs = require('fs');
-            const path = require('path');
+          path: ./artifacts
 
-            const runId = context.payload.workflow_run.id;
-            const { owner, repo } = context.repo;
-            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
-              owner,
-              repo,
-              run_id: runId,
-              per_page: 100,
-            });
-
-            if (artifacts.length === 0) {
-              throw new Error(`No artifacts found for workflow run ${runId}`);
-            }
-
-            const artifactsDir = path.join(process.env.GITHUB_WORKSPACE, 'artifacts');
-            fs.mkdirSync(artifactsDir, { recursive: true });
-
-            for (const artifact of artifacts) {
-              const download = await github.rest.actions.downloadArtifact({
-                owner,
-                repo,
-                artifact_id: artifact.id,
-                archive_format: 'zip',
-              });
-
-              const artifactPath = path.join(artifactsDir, `${artifact.name}.zip`);
-              fs.writeFileSync(artifactPath, Buffer.from(download.data));
-            }
-
-      - name: Extract packaged artifacts
+      - name: Get tag name
         if: ${{ github.event_name == 'workflow_run' }}
         run: |
           shopt -s nullglob

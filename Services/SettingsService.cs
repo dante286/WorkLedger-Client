@@ -7,8 +7,11 @@ namespace WorkLedger_Client.Services
 {
     public class AppSettings
     {
+        public const string CurrentApplicationVersion = "1.0.4";
+
         public string Theme { get; set; } = "System"; // "System", "Light", "Dark"
         public string DataDirectory { get; set; } = string.Empty;
+        public string ApplicationVersion { get; set; } = CurrentApplicationVersion;
     }
 
     public class SettingsService
@@ -84,7 +87,8 @@ namespace WorkLedger_Client.Services
                 {
                     var defaults = new AppSettings
                     {
-                        DataDirectory = _dataDirectory
+                        DataDirectory = _dataDirectory,
+                        ApplicationVersion = AppSettings.CurrentApplicationVersion
                     };
                     SaveSettings(defaults);
                     return defaults;
@@ -93,10 +97,16 @@ namespace WorkLedger_Client.Services
                 var json = File.ReadAllText(_settingsPath);
                 var settings = JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
 
-                // Backfill missing data directory for older settings files
+                // Backfill missing data directory and version for older settings files
                 if (string.IsNullOrWhiteSpace(settings.DataDirectory))
                 {
                     settings.DataDirectory = _dataDirectory;
+                    SaveSettings(settings);
+                }
+
+                if (string.IsNullOrWhiteSpace(settings.ApplicationVersion))
+                {
+                    settings.ApplicationVersion = AppSettings.CurrentApplicationVersion;
                     SaveSettings(settings);
                 }
 
