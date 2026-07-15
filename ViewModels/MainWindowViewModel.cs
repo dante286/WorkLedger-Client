@@ -12,6 +12,7 @@ using CommunityToolkit.Mvvm.Input;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Platform.Storage;
 using WorkLedger_Client.Views;
 using System.Runtime.CompilerServices;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -578,34 +579,40 @@ namespace WorkLedger_Client.ViewModels
 
             try
             {
-                var dlg = new OpenFolderDialog
+                var topLevel = TopLevel.GetTopLevel(desktop.MainWindow);
+                if (topLevel?.StorageProvider == null)
+                    return;
+
+                var picked = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { AllowMultiple = false });
+                if (picked == null || picked.Count == 0) return;
+
+                string? path = picked[0]?.Path?.LocalPath;
+
+                if (string.IsNullOrWhiteSpace(path))
                 {
-                    Title = "Select Data Directory for WorkLedger"
-                };
+                    _toastService?.ShowToast("Selected folder has no accessible local path", 2400);
+                    return;
+                }
 
-                var result = await dlg.ShowAsync(desktop.MainWindow);
-                if (!string.IsNullOrWhiteSpace(result))
-                    {
-                        // Validate write permissions to the selected directory
-                        try
-                        {
-                        var testFile = Path.Combine(result, ".workledger_test");
-                            File.WriteAllText(testFile, "test");
-                            File.Delete(testFile);
+                // Validate write permissions to the selected directory using normal filesystem APIs when a local path is available
+                try
+                {
+                    var testFile = Path.Combine(path, ".workledger_test");
+                    File.WriteAllText(testFile, "test");
+                    File.Delete(testFile);
 
-                        DataDirectory = result;
-                            _toastService?.ShowToast("Data directory set. Restart the app to migrate data.", 2000);
-                        }
-                        catch (UnauthorizedAccessException)
-                        {
-                            _toastService?.ShowToast("Access denied: Cannot write to the selected location", 2000);
-                            System.Diagnostics.Debug.WriteLine("Access denied when selecting data directory");
-                        }
-                        catch (Exception ex)
-                        {
-                            _toastService?.ShowToast($"Cannot write to this location: {ex.Message}", 2000);
-                            System.Diagnostics.Debug.WriteLine($"Error validating data directory: {ex.Message}");
-                    }
+                    DataDirectory = path;
+                    _toastService?.ShowToast("Data directory set. Restart the app to migrate data.", 2000);
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    _toastService?.ShowToast("Access denied: Cannot write to the selected location", 2000);
+                    System.Diagnostics.Debug.WriteLine("Access denied when selecting data directory");
+                }
+                catch (Exception ex)
+                {
+                    _toastService?.ShowToast($"Cannot write to this location: {ex.Message}", 2000);
+                    System.Diagnostics.Debug.WriteLine($"Error validating data directory: {ex.Message}");
                 }
             }
             catch (Exception ex)
