@@ -590,7 +590,7 @@ namespace WorkLedger_Client.ViewModels
 
                 if (string.IsNullOrWhiteSpace(path))
                 {
-                    _toastService?.ShowToast("Selected folder has no accessible local path", 2400);
+                    _toastService?.ShowToast("Selected folder has no accessible local path", 3000);
                     return;
                 }
 
@@ -602,22 +602,35 @@ namespace WorkLedger_Client.ViewModels
                     File.Delete(testFile);
 
                     DataDirectory = path;
-                    _toastService?.ShowToast("Data directory set. Restart the app to migrate data.", 2000);
+
+                    // Save the new directory to settings immediately
+                    if (_settingsService != null)
+                    {
+                        var settings = new WorkLedger_Client.Services.AppSettings
+                        {
+                            Theme = SelectedTheme,
+                            DataDirectory = path,
+                            ApplicationVersion = ApplicationVersion
+                        };
+                        _settingsService.SaveSettings(settings);
+                    }
+
+                    _toastService?.ShowToast("Data directory set. Restart the app to finish migrating data.", 3000);
                 }
                 catch (UnauthorizedAccessException)
                 {
-                    _toastService?.ShowToast("Access denied: Cannot write to the selected location", 2000);
+                    _toastService?.ShowToast("Access denied: Cannot write to the selected location", 3000);
                     System.Diagnostics.Debug.WriteLine("Access denied when selecting data directory");
                 }
                 catch (Exception ex)
                 {
-                    _toastService?.ShowToast($"Cannot write to this location: {ex.Message}", 2000);
+                    _toastService?.ShowToast($"Cannot write to this location: {ex.Message}", 3000);
                     System.Diagnostics.Debug.WriteLine($"Error validating data directory: {ex.Message}");
                 }
             }
             catch (Exception ex)
             {
-                _toastService?.ShowToast("Failed to browse for data directory", 2000);
+                _toastService?.ShowToast("Failed to browse for data directory", 3000);
                 System.Diagnostics.Debug.WriteLine($"Error browsing for data directory: {ex.Message}");
             }
         }
