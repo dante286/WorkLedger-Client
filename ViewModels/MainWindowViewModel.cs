@@ -601,6 +601,25 @@ namespace WorkLedger_Client.ViewModels
                     File.WriteAllText(testFile, "test");
                     File.Delete(testFile);
 
+                    // Check if the directory already contains WorkLedger data files
+                    var settingsFile = Path.Combine(path, "settings.json");
+                    var dbFile = Path.Combine(path, "workledger.db");
+
+                    if (File.Exists(settingsFile) || File.Exists(dbFile))
+                    {
+                        var existingFiles = new List<string>();
+                        if (File.Exists(settingsFile)) existingFiles.Add("settings.json");
+                        if (File.Exists(dbFile)) existingFiles.Add("workledger.db");
+
+                        var fileList = string.Join(", ", existingFiles);
+                        _toastService?.ShowToast(
+                            $"Cannot use this directory: it already contains WorkLedger data ({fileList}). " +
+                            $"Please select an empty directory or the location of existing WorkLedger data to migrate.",
+                            4000);
+                        System.Diagnostics.Debug.WriteLine($"Directory already contains WorkLedger files: {fileList}");
+                        return;
+                    }
+
                     DataDirectory = path;
 
                     // Save the new directory to settings immediately
