@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 
 namespace WorkLedger_Client.Services
@@ -12,6 +13,21 @@ namespace WorkLedger_Client.Services
         public string Theme { get; set; } = "System"; // "System", "Light", "Dark"
         public string DataDirectory { get; set; } = string.Empty;
         public string ApplicationVersion { get; set; } = CurrentApplicationVersion;
+        public string BackupDirectory { get; set; } = string.Empty;
+        public BackupInterval BackupInterval { get; set; } = BackupInterval.Disabled;
+        public bool BackupOnClose { get; set; } = false;
+    }
+
+    public enum BackupInterval
+    {
+        Disabled = 0,
+        OneMinute = 1,
+        FiveMinutes = 5,
+        OneHour = 60,
+
+        // Legacy value: previously meant "only back up on close". Kept so old settings.json
+        // files still deserialize; LoadSettings migrates it to BackupOnClose = true.
+        OnClose = 999
     }
 
     public class SettingsService
@@ -95,7 +111,9 @@ namespace WorkLedger_Client.Services
                 }
 
                 var json = File.ReadAllText(_settingsPath);
-                var settings = JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+                var options = new JsonSerializerOptions();
+                options.Converters.Add(new JsonStringEnumConverter());
+                var settings = JsonSerializer.Deserialize<AppSettings>(json, options) ?? new AppSettings();
 
                 // Backfill missing data directory and version for older settings files
                 if (string.IsNullOrWhiteSpace(settings.DataDirectory))
@@ -107,6 +125,21 @@ namespace WorkLedger_Client.Services
                 if (string.IsNullOrWhiteSpace(settings.ApplicationVersion))
                 {
                     settings.ApplicationVersion = AppSettings.CurrentApplicationVersion;
+                    SaveSettings(settings);
+                }
+
+                // Backfill backup settings if missing (for older settings files)
+                if (string.IsNullOrWhiteSpace(settings.BackupDirectory))
+                {
+                    settings.BackupDirectory = string.Empty;
+                    SaveSettings(settings);
+                }
+
+                // Migrate legacy "OnClose" interval to the standalone BackupOnClose flag
+                if (settings.BackupInterval == BackupInterval.OnClose)
+                {
+                    settings.BackupOnClose = true;
+                    settings.BackupInterval = BackupInterval.Disabled;
                     SaveSettings(settings);
                 }
 
@@ -125,13 +158,162 @@ namespace WorkLedger_Client.Services
         {
             try
             {
-                var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
+                var options = new JsonSerializerOptions { WriteIndented = true };
+                options.Converters.Add(new JsonStringEnumConverter());
+                var json = JsonSerializer.Serialize(settings, options);
                 File.WriteAllText(_settingsPath, json);
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Failed to save settings: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Backs up settings.json and the sqlite database directly into the given destination directory,
+        /// overwriting any files left there by a previous backup.
+        /// Returns true if both files were successfully copied (or present and copied), false otherwise.
+        /// </summary>
+        public async Task<bool> CreateBackupAsync(string destinationDirectory)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(destinationDirectory))
+                    return false;
+
+                // Ensure dest exists
+                if (!Directory.Exists(destinationDirectory))
+                    Directory.CreateDirectory(destinationDirectory);
+
+                var success = true;
+
+                // Copy settings
+                try
+                {
+                    var destSettings = Path.Combine(destinationDirectory, SettingsFileName);
+                    await TryCopyFileWithRetriesAsync(_settingsPath, destSettings);
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Failed to backup settings: {ex.Message}");
+                    success = false;
+                }
+
+                // Copy database
+                try
+                {
+                    var srcDb = DatabasePath;
+                    var destDb = Path.Combine(destinationDirectory, DefaultDbFileName);
+                    await TryCopyFileWithRetriesAsync(srcDb, destDb);
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Failed to backup database: {ex.Message}");
+                    success = false;
+                }
+
+                return success;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"CreateBackupAsync failed: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Validates that a folder looks like a backup source (contains settings.json and workledger.db)
+        /// </summary>
+        public bool ValidateBackupSource(string sourceDirectory)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(sourceDirectory)) return false;
+                var settingsPath = Path.Combine(sourceDirectory, SettingsFileName);
+                var dbPath = Path.Combine(sourceDirectory, DefaultDbFileName);
+                return File.Exists(settingsPath) && File.Exists(dbPath);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Restores settings.json and workledger.db from a backup source folder into the application's data directory.
+        /// Existing files are preserved by renaming them with a .backup_TIMESTAMP suffix before overwrite.
+        /// </summary>
+        public async Task<(bool Success, string Error)> RestoreFromDirectoryAsync(string sourceDirectory)
+        {
+            try
+            {
+                if (!ValidateBackupSource(sourceDirectory))
+                {
+                    return (false, "Source directory does not contain required files.");
+                }
+
+                // Ensure data directory exists
+                if (!Directory.Exists(_dataDirectory))
+                    Directory.CreateDirectory(_dataDirectory);
+
+                var timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
+
+                // Backup existing settings
+                var existingSettings = _settingsPath;
+                if (File.Exists(existingSettings))
+                {
+                    var bak = existingSettings + $".backup_{timestamp}";
+                    File.Copy(existingSettings, bak, overwrite: true);
+                }
+
+                // Backup existing DB
+                var existingDb = DatabasePath;
+                if (File.Exists(existingDb))
+                {
+                    var bakDb = existingDb + $".backup_{timestamp}";
+                    File.Copy(existingDb, bakDb, overwrite: true);
+                }
+
+                // Copy new files
+                var srcSettings = Path.Combine(sourceDirectory, SettingsFileName);
+                var destSettings = _settingsPath;
+                await TryCopyFileWithRetriesAsync(srcSettings, destSettings);
+
+                var srcDb = Path.Combine(sourceDirectory, DefaultDbFileName);
+                var destDb = DatabasePath;
+                await TryCopyFileWithRetriesAsync(srcDb, destDb);
+
+                return (true, string.Empty);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"RestoreFromDirectoryAsync failed: {ex.Message}");
+                return (false, ex.Message);
+            }
+        }
+
+        private async Task TryCopyFileWithRetriesAsync(string src, string dest, int maxAttempts = 3)
+        {
+            if (!File.Exists(src)) throw new FileNotFoundException("Source file not found", src);
+
+            var attempt = 0;
+            var lastEx = (Exception?)null;
+            while (attempt < maxAttempts)
+            {
+                try
+                {
+                    File.Copy(src, dest, overwrite: true);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    lastEx = ex;
+                    attempt++;
+                    await Task.Delay(250);
+                }
+            }
+
+            throw lastEx ?? new IOException("Unknown copy failure");
         }
 
         /// <summary>

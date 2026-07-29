@@ -68,6 +68,7 @@ jobs:
         with:
           name: workledger-release-metadata
           path: ./release-metadata/tag_name.txt
+          retention-days: 3
 
       - name: Publish Windows
         if: matrix.os == 'windows-latest'
@@ -200,15 +201,20 @@ jobs:
               <key>CFBundlePackageType</key>
               <string>APPL</string>
               <key>CFBundleShortVersionString</key>
-              <string>\${VERSION}</string>
+              <string>${VERSION}</string>
               <key>CFBundleVersion</key>
-              <string>\${VERSION}</string>
+              <string>${VERSION}</string>
               <key>LSMinimumSystemVersion</key>
               <string>10.12</string>
           </dict>
           </plist>
           EOF
-          
+
+          # Ad-hoc sign so Gatekeeper doesn't flag the unsigned single-file binary as damaged.
+          # This is not full Developer ID notarization: users will still need to right-click > Open
+          # (or run `xattr -cr`) on first launch to bypass the "unidentified developer" prompt.
+          codesign --force --deep --sign - WorkLedger.app
+
           # Create DMG (using hdiutil on macOS)
           hdiutil create -volname "WorkLedger" -srcfolder WorkLedger.app -ov -format UDZO WorkLedger.dmg
           rm -rf WorkLedger.app ./publish/osx-x64
@@ -219,6 +225,7 @@ jobs:
         with:
           name: workledger-windows
           path: ./WorkLedger-setup.exe
+          retention-days: 3
 
       - name: Upload Linux Artifact
         if: matrix.os == 'ubuntu-latest'
@@ -228,6 +235,7 @@ jobs:
           path: |
             ./workledger.deb
             ./workledger.rpm
+          retention-days: 3
 
       - name: Upload macOS Artifact
         if: matrix.os == 'macos-latest'
@@ -235,3 +243,4 @@ jobs:
         with:
           name: workledger-macos
           path: ./WorkLedger.dmg
+          retention-days: 3

@@ -23,6 +23,7 @@
         <converters:ActiveTaskToTagConverter x:Key="ActiveTaskToTagConverter" />
         <converters:ActiveProjectMatchConverter x:Key="ActiveProjectMatchConverter" />
         <converters:BooleanToArchiveColorConverter x:Key="BooleanToArchiveColorConverter" />
+        <converters:BackupIntervalToDisplayConverter x:Key="BackupIntervalToDisplayConverter" />
     </Window.Resources>
 
     <Grid>
@@ -524,6 +525,61 @@
                     <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
                         <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Application version</TextBlock>
                         <TextBlock Width="160" VerticalAlignment="Center" Text="{Binding ApplicationVersion}" />
+                    </StackPanel>
+
+                    <!-- Backup Settings -->
+                    <TextBlock Foreground="{DynamicResource TextPrimary}" FontWeight="600" FontSize="14" Margin="0,8,0,0">Backup</TextBlock>
+
+                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Backup Folder</TextBlock>
+                        <TextBox Width="280" Text="{Binding BackupDirectory, Mode=TwoWay}" />
+                        <Button Margin="8,0,0,0" Command="{Binding PickBackupFolderCommand}"
+                                Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
+                                FontSize="12" FontWeight="500" Padding="8,6" CornerRadius="7"
+                                VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
+                            <TextBlock Text="Pick Folder" />
+                        </Button>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Backup Interval</TextBlock>
+                        <ComboBox Width="160" ItemsSource="{Binding BackupIntervalOptions}" SelectedItem="{Binding BackupInterval, Mode=TwoWay}">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Converter={StaticResource BackupIntervalToDisplayConverter}}" />
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                        <CheckBox IsChecked="{Binding BackupOnClose, Mode=TwoWay}" VerticalAlignment="Center" MinWidth="0">
+                            <CheckBox.Styles>
+                                <Style Selector="CheckBox /template/ Border#NormalRectangle">
+                                    <Setter Property="CornerRadius" Value="3" />
+                                    <Setter Property="BorderThickness" Value="1.5" />
+                                </Style>
+                            </CheckBox.Styles>
+                            <TextBlock Text="Back up on close" Foreground="{DynamicResource TextSecondary}" Margin="6,0,0,0" />
+                        </CheckBox>
+                    </StackPanel>
+
+                    <!-- Restore Settings -->
+                    <TextBlock Foreground="{DynamicResource TextPrimary}" FontWeight="600" FontSize="14" Margin="0,12,0,0">Restore</TextBlock>
+
+                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                        <Button Command="{Binding RestoreFromFolderCommand}"
+                                Background="{DynamicResource AmberWarning}" Foreground="White"
+                                FontSize="12" FontWeight="500" Padding="14,6" CornerRadius="7"
+                                VerticalAlignment="Center" BorderThickness="0">
+                            <Button.Styles>
+                                <Style Selector="Button:pointerover /template/ ContentPresenter">
+                                    <Setter Property="Background" Value="{DynamicResource AmberHover}" />
+                                </Style>
+                            </Button.Styles>
+                            <TextBlock Text="Restore from Folder" />
+                        </Button>
+                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextTertiary}" FontSize="11">Select folder with settings.json and workledger.db</TextBlock>
                     </StackPanel>
                 </StackPanel>
             </Border>

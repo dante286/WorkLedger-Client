@@ -75,9 +75,27 @@ namespace WorkLedger_Client
                 // Initialize toast service for transient messages
                 var toastService = new ToastService(desktop);
 
+                var mainViewModel = new MainWindowViewModel(localDb, timerService, appState, themeService, settingsService, toastService);
                 desktop.MainWindow = new MainWindow
                 {
-                    DataContext = new MainWindowViewModel(localDb, timerService, appState, themeService, settingsService, toastService),
+                    DataContext = mainViewModel,
+                };
+
+                // Ensure On-close backup runs (with a short timeout) before application exit,
+                // but only if the user has opted into backing up on close.
+                desktop.Exit += async (s, e) =>
+                {
+                    try
+                    {
+                        if (mainViewModel.BackupOnClose && !string.IsNullOrWhiteSpace(mainViewModel.BackupDirectory))
+                        {
+                            await timerService.RunOnCloseBackupAsync(TimeSpan.FromSeconds(5));
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"On-close backup error: {ex.Message}");
+                    }
                 };
             }
 

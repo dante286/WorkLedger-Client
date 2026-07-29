@@ -84,11 +84,28 @@ namespace WorkLedger_Client.ViewModels
 
         public System.Collections.ObjectModel.ObservableCollection<string> ThemeOptions { get; } = new System.Collections.ObjectModel.ObservableCollection<string> { "System", "Light", "Dark" };
 
+        public System.Collections.ObjectModel.ObservableCollection<BackupInterval> BackupIntervalOptions { get; } = new System.Collections.ObjectModel.ObservableCollection<BackupInterval>
+        {
+            BackupInterval.Disabled,
+            BackupInterval.OneMinute,
+            BackupInterval.FiveMinutes,
+            BackupInterval.OneHour
+        };
+
         [ObservableProperty]
         private string _selectedTheme = "System";
 
         [ObservableProperty]
         private string _dataDirectory = string.Empty;
+
+        [ObservableProperty]
+        private string _backupDirectory = string.Empty;
+
+        [ObservableProperty]
+        private BackupInterval _backupInterval = BackupInterval.Disabled;
+
+        [ObservableProperty]
+        private bool _backupOnClose;
 
         [ObservableProperty]
         private string _applicationVersion = WorkLedger_Client.Services.AppSettings.CurrentApplicationVersion;
@@ -133,6 +150,9 @@ namespace WorkLedger_Client.ViewModels
                 {
                     Theme = SelectedTheme,
                     DataDirectory = DataDirectory,
+                    BackupDirectory = BackupDirectory,
+                    BackupInterval = BackupInterval,
+                    BackupOnClose = BackupOnClose,
                     ApplicationVersion = ApplicationVersion
                 };
                 _settingsService!.SaveSettings(settings);
@@ -167,6 +187,22 @@ namespace WorkLedger_Client.ViewModels
             TriggerAutosave();
         }
 
+        partial void OnBackupDirectoryChanged(string value)
+        {
+            TriggerAutosave();
+        }
+
+        partial void OnBackupIntervalChanged(BackupInterval value)
+        {
+            _timerService.ConfigureBackupInterval(value);
+            TriggerAutosave();
+        }
+
+        partial void OnBackupOnCloseChanged(bool value)
+        {
+            TriggerAutosave();
+        }
+
         private void TriggerAutosave()
         {
             // Cancel previous scheduled save
@@ -187,6 +223,9 @@ namespace WorkLedger_Client.ViewModels
                     {
                         Theme = SelectedTheme,
                         DataDirectory = DataDirectory,
+                        BackupDirectory = BackupDirectory,
+                        BackupInterval = BackupInterval,
+                        BackupOnClose = BackupOnClose,
                         ApplicationVersion = ApplicationVersion
                     };
 
@@ -629,6 +668,8 @@ namespace WorkLedger_Client.ViewModels
                         {
                             Theme = SelectedTheme,
                             DataDirectory = path,
+                            BackupDirectory = BackupDirectory,
+                            BackupInterval = BackupInterval,
                             ApplicationVersion = ApplicationVersion
                         };
                         _settingsService.SaveSettings(settings);
@@ -651,6 +692,79 @@ namespace WorkLedger_Client.ViewModels
             {
                 _toastService?.ShowToast("Failed to browse for data directory", 3000);
                 System.Diagnostics.Debug.WriteLine($"Error browsing for data directory: {ex.Message}");
+            }
+        }
+
+        [RelayCommand]
+        private async Task PickBackupFolderAsync()
+        {
+            var desktop = Avalonia.Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime;
+            if (desktop?.MainWindow == null) return;
+
+            try
+            {
+                var topLevel = TopLevel.GetTopLevel(desktop.MainWindow);
+                if (topLevel?.StorageProvider == null)
+                    return;
+
+                var picked = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { AllowMultiple = false });
+                if (picked == null || picked.Count == 0) return;
+
+                var path = picked[0]?.Path?.LocalPath;
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    _toastService?.ShowToast("Selected folder has no accessible local path", 3000);
+                    return;
+                }
+
+                BackupDirectory = path;
+                _toastService?.ShowToast("Backup folder selected", 1400);
+            }
+            catch (Exception ex)
+            {
+                _toastService?.ShowToast("Failed to pick backup folder", 3000);
+                System.Diagnostics.Debug.WriteLine($"Error picking backup folder: {ex.Message}");
+            }
+        }
+
+        [RelayCommand]
+        private async Task RestoreFromFolderAsync()
+        {
+            if (_settingsService == null)
+                return;
+
+            var desktop = Avalonia.Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime;
+            if (desktop?.MainWindow == null) return;
+
+            try
+            {
+                var topLevel = TopLevel.GetTopLevel(desktop.MainWindow);
+                if (topLevel?.StorageProvider == null)
+                    return;
+
+                var picked = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { AllowMultiple = false });
+                if (picked == null || picked.Count == 0) return;
+
+                var path = picked[0]?.Path?.LocalPath;
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    _toastService?.ShowToast("Selected folder has no accessible local path", 3000);
+                    return;
+                }
+
+                var (success, error) = await _settingsService.RestoreFromDirectoryAsync(path);
+                if (success)
+                {
+                    _toastService?.ShowToast("Restore completed. Restart the app to load restored data.", 3500);
+                    return;
+                }
+
+                _toastService?.ShowToast($"Restore failed: {error}", 3500);
+            }
+            catch (Exception ex)
+            {
+                _toastService?.ShowToast("Restore failed", 3000);
+                System.Diagnostics.Debug.WriteLine($"Error restoring from folder: {ex.Message}");
             }
         }
     }
