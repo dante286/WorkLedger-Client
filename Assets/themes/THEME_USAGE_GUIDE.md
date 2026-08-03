@@ -49,6 +49,15 @@ Located in `Services/ThemeService.cs`, it provides:
 <Color x:Key="TextQuaternary">  <!-- Muted, disabled states -->
 ```
 
+### Ink Scale (Fixed - Same in Both Themes)
+```xaml
+<!-- Fixed dark text for use on light/bright accent backgrounds (e.g. Amber buttons) -->
+<Color x:Key="Ink950">#0e1117</Color>
+<Color x:Key="Ink100">#f4f6f9</Color>
+<Color x:Key="Ink200">#e2e8f0</Color>
+```
+Unlike `TextPrimary`/`TextSecondary`/etc., these do NOT adapt per theme — they're a deliberately fixed dark value, for cases where a component's background (e.g. `AmberWarning`) is bright/light in both themes and needs guaranteed-dark text rather than theme-adaptive text.
+
 ### Slate Scale (Full Range - Same in Both Themes)
 ```xaml
 <!-- 11-step neutral scale for precise control -->
@@ -81,13 +90,15 @@ Located in `Services/ThemeService.cs`, it provides:
 
 ### Font Sizes
 ```xaml
-<x:Double x:Key="FontSizeSmall">11</x:Double>      <!-- Small labels -->
-<x:Double x:Key="FontSizeBase">12</x:Double>       <!-- Standard UI -->
-<x:Double x:Key="FontSizeMedium">13</x:Double>     <!-- Body text -->
+<x:Double x:Key="FontSizeSmall">12</x:Double>      <!-- Small labels -->
+<x:Double x:Key="FontSizeBase">13</x:Double>       <!-- Standard UI -->
+<x:Double x:Key="FontSizeMedium">14</x:Double>     <!-- Body text -->
 <x:Double x:Key="FontSizeLarge">16</x:Double>      <!-- Headers -->
 <x:Double x:Key="FontSizeXLarge">20</x:Double>     <!-- Larger headers -->
 <x:Double x:Key="FontSizeTitle">28</x:Double>      <!-- Page title -->
 ```
+
+> Note: these tokens document the intended type scale, but `Views/*.axaml` currently set `FontSize` as literal numbers rather than `{DynamicResource FontSize*}` bindings. When adding new UI text, prefer binding to these tokens over hardcoding a literal so the scale stays centrally adjustable.
 
 ## Spacing & Layout Tokens
 

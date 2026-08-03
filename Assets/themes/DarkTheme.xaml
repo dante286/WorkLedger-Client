@@ -20,6 +20,11 @@
     <Color x:Key="Slate100">#dce8f2</Color>
     <Color x:Key="Slate050">#f0f5fa</Color>
     
+    <!-- Ink Scale - Fixed dark text for use on light/bright accent backgrounds (same value in both themes) -->
+    <Color x:Key="Ink950">#0e1117</Color>
+    <Color x:Key="Ink100">#f4f6f9</Color>
+    <Color x:Key="Ink200">#e2e8f0</Color>
+
     <!-- Primary Colors -->
     <Color x:Key="TealActive">#0d9488</Color>
     <Color x:Key="TealGlow">#2dd4bf</Color>
@@ -51,9 +56,9 @@
     <FontFamily x:Key="FontMono">avares://WorkLedger-Client/Assets/fonts#DM Mono</FontFamily>
     
     <!-- Font Sizes (in device-independent units) -->
-    <x:Double x:Key="FontSizeSmall">11</x:Double>
-    <x:Double x:Key="FontSizeBase">12</x:Double>
-    <x:Double x:Key="FontSizeMedium">13</x:Double>
+    <x:Double x:Key="FontSizeSmall">12</x:Double>
+    <x:Double x:Key="FontSizeBase">13</x:Double>
+    <x:Double x:Key="FontSizeMedium">14</x:Double>
     <x:Double x:Key="FontSizeLarge">16</x:Double>
     <x:Double x:Key="FontSizeXLarge">20</x:Double>
     <x:Double x:Key="FontSizeTitle">28</x:Double>

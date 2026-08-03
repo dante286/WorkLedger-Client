@@ -15,17 +15,17 @@
       <TextBlock Text="Create Project" FontSize="16" FontWeight="Bold" FontFamily="{DynamicResource FontDisplay}" Foreground="{DynamicResource TextPrimary}" />
 
       <StackPanel>
-        <TextBlock Text="Name" Margin="0,4,0,2" FontFamily="{DynamicResource FontBody}" Foreground="{DynamicResource TextSecondary}" />
+        <TextBlock Text="Name" Margin="0,4,0,2" FontFamily="{DynamicResource FontBody}" Foreground="{DynamicResource TextSecondary}" FontSize="13" />
         <TextBox x:Name="NameBox" Watermark="Project name" Background="{DynamicResource Surface2}" BorderBrush="{DynamicResource Border}" Foreground="{DynamicResource TextPrimary}" />
       </StackPanel>
 
       <StackPanel>
-        <TextBlock Text="Project Code" Margin="0,4,0,2" FontFamily="{DynamicResource FontBody}" Foreground="{DynamicResource TextSecondary}" />
+        <TextBlock Text="Project Code" Margin="0,4,0,2" FontFamily="{DynamicResource FontBody}" Foreground="{DynamicResource TextSecondary}" FontSize="13" />
         <TextBox x:Name="CodeBox" Watermark="Code" Background="{DynamicResource Surface2}" BorderBrush="{DynamicResource Border}" Foreground="{DynamicResource TextPrimary}" />
       </StackPanel>
 
       <StackPanel>
-        <TextBlock Text="Description" Margin="0,4,0,2" FontFamily="{DynamicResource FontBody}" Foreground="{DynamicResource TextSecondary}" />
+        <TextBlock Text="Description" Margin="0,4,0,2" FontFamily="{DynamicResource FontBody}" Foreground="{DynamicResource TextSecondary}" FontSize="13" />
         <TextBox x:Name="DescriptionBox" AcceptsReturn="True" Height="100" Background="{DynamicResource Surface2}" BorderBrush="{DynamicResource Border}" Foreground="{DynamicResource TextPrimary}" />
       </StackPanel>
 

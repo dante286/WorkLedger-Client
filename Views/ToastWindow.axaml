@@ -11,6 +11,6 @@
         Padding="0">
 
   <Border CornerRadius="6" Background="#DD1E2938" Padding="10" Margin="8">
-    <TextBlock Name="MessageText" Foreground="White" FontSize="12" TextWrapping="Wrap" />
+    <TextBlock Name="MessageText" Foreground="White" FontSize="13" TextWrapping="Wrap" />
   </Border>
 </Window>

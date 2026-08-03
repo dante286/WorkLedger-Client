@@ -88,9 +88,9 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             
-                            <Button Content="Create Project" Command="{Binding CreateProjectCommand}" 
+                            <Button Content="Create Project" Command="{Binding CreateProjectCommand}"
                                     Background="{DynamicResource TealActive}" Foreground="White"
-                                    FontSize="12" FontWeight="500" Padding="14,6" CornerRadius="7" 
+                                    FontSize="13" FontWeight="500" Padding="14,6" CornerRadius="7"
                                     VerticalAlignment="Center" BorderThickness="0">
                                 <Button.Styles>
                                     <Style Selector="Button:pointerover /template/ ContentPresenter">
@@ -107,7 +107,7 @@
                                             <Setter Property="BorderThickness" Value="1.5" />
                                         </Style>
                                     </CheckBox.Styles>
-                                    <TextBlock Text="Show Archived Tasks" FontSize="12" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
+                                    <TextBlock Text="Show Archived Tasks" FontSize="13" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
                                 </CheckBox>
                             </StackPanel>
                         </Grid>
@@ -174,13 +174,13 @@
                                         </Grid.Styles>
                                     <Border Grid.Column="0" Width="32" Height="32" CornerRadius="7" 
                                             Background="{DynamicResource TealActive}" Opacity="0.14" />
-                                    <TextBlock Grid.Column="0" Text="{Binding ProjectCode}" 
+                                    <TextBlock Grid.Column="0" Text="{Binding ProjectCode}"
                                                HorizontalAlignment="Center" VerticalAlignment="Center"
-                                               FontSize="10" FontWeight="500" FontFamily="{DynamicResource FontMono}"
+                                               FontSize="11" FontWeight="500" FontFamily="{DynamicResource FontMono}"
                                                Foreground="{DynamicResource TealActive}" />
                                     
                                     <StackPanel Grid.Column="1" Margin="11,0" VerticalAlignment="Center">
-                                        <TextBlock Text="{Binding Name}" FontSize="13" FontWeight="500" FontFamily="{DynamicResource FontMono}"
+                                        <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="500" FontFamily="{DynamicResource FontMono}"
                                                    Foreground="{DynamicResource TextPrimary}" />
                                         <StackPanel Orientation="Horizontal" Spacing="5">
                                             <Border Background="{DynamicResource TealActive}"
@@ -195,7 +195,7 @@
                                                         <Binding Path="Id" />
                                                     </MultiBinding>
                                                 </Border.IsVisible>
-                                                <TextBlock Text="RUNNING" FontSize="9" FontWeight="800"
+                                                <TextBlock Text="RUNNING" FontSize="10" FontWeight="800"
                                                            Foreground="White" LetterSpacing="0.5"
                                                            VerticalAlignment="Center" />
                                             </Border>
@@ -262,11 +262,11 @@
                                 <StackPanel>
                                     <TextBlock Text="{Binding SelectedProject.Name}" FontSize="16" FontWeight="700" FontFamily="{DynamicResource FontDisplay}" Foreground="{DynamicResource TextPrimary}" />
                                     <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,3,0,0">
-                                        <TextBlock Text="{Binding TaskCount}" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
-                                        <TextBlock Text="Tasks" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextSecondary}" />
-                                        <TextBlock Text="·" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
-                                        <TextBlock Text="This Week:" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
-                                        <TextBlock Text="{Binding WeeklyTotal}" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TealActive}" />
+                                        <TextBlock Text="{Binding TaskCount}" FontSize="11" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
+                                        <TextBlock Text="Tasks" FontSize="11" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextSecondary}" />
+                                        <TextBlock Text="·" FontSize="11" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
+                                        <TextBlock Text="This Week:" FontSize="11" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
+                                        <TextBlock Text="{Binding WeeklyTotal}" FontSize="11" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TealActive}" />
                                     </StackPanel>
                                 </StackPanel>
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Spacing="8" IsVisible="{Binding ActiveProjectId, Converter={x:Static ObjectConverters.IsNotNull}}">
@@ -297,15 +297,18 @@
                             </ListBox.Styles>
                             <ListBox.ItemTemplate>
                                 <DataTemplate DataType="vm:TaskItemViewModel">
-                                    <Border CornerRadius="8" BorderThickness="1" Background="{DynamicResource Surface}">
+                                    <Border x:Name="TaskCard" CornerRadius="8" BorderThickness="1" Background="{DynamicResource Surface}">
                                         <Border.Styles>
-                                            <Style Selector="Border">
+                                            <!-- Scoped to #TaskCard only - an unscoped "Border" selector here would
+                                                 also match the nested TaskHeader/time-entry Borders below and dim
+                                                 their text even when this card is active. -->
+                                            <Style Selector="Border#TaskCard">
                                                 <Setter Property="BorderBrush" Value="{DynamicResource Border}" />
                                                 <Setter Property="Opacity" Value="0.75" />
                                                 <Setter Property="BoxShadow" Value="0 1 4 0 #0D000000" />
                                             </Style>
                                             <!-- Active Task treatment -->
-                                            <Style Selector="Border[Tag=Active]">
+                                            <Style Selector="Border#TaskCard[Tag=Active]">
                                                 <Setter Property="BorderBrush" Value="{DynamicResource TealActive}" />
                                                 <Setter Property="Background" Value="#1a0d9488" /> <!-- Subtle teal bg -->
                                                 <Setter Property="Opacity" Value="1.0" />
@@ -351,13 +354,13 @@
                                                 </CheckBox>
                                                 
                                                 <TextBlock Grid.Column="1" Text="{Binding Name}" VerticalAlignment="Center"
-                                                           FontSize="13" FontWeight="500" FontFamily="{DynamicResource FontBody}"
+                                                           FontSize="14" FontWeight="500" FontFamily="{DynamicResource FontBody}"
                                                            Foreground="{DynamicResource TextPrimary}"
                                                            TextDecorations="{Binding IsCompleted, Converter={StaticResource BooleanToTextDecorationsConverter}}" />
                                                 
                                                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Spacing="2">
-                                                    <TextBlock Text="Total" FontSize="11" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
-                                                    <TextBlock Text="{Binding TotalTime}" FontSize="12" FontWeight="500" FontFamily="{DynamicResource FontMono}">
+                                                    <TextBlock Text="Total" FontSize="12" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextTertiary}" />
+                                                    <TextBlock Text="{Binding TotalTime}" FontSize="13" FontWeight="500" FontFamily="{DynamicResource FontMono}">
                                                         <TextBlock.Styles>
                                                             <Style Selector="TextBlock">
                                                                 <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
@@ -424,7 +427,7 @@
                                                                     <Style Selector="Grid">
                                                                     </Style>
                                                                 </Grid.Styles>
-                                                                <TextBlock Grid.Column="0" FontSize="11" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextPrimary}" FontWeight="500">
+                                                                <TextBlock Grid.Column="0" FontSize="12" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextPrimary}" FontWeight="500">
                                                                     <TextBlock.Text>
                                                                         <MultiBinding StringFormat="{}{0:yyyy-MM-dd}: {0:HH:mm:ss} – {1:HH:mm:ss}">
                                                                             <Binding Path="StartTime" Converter="{StaticResource UtcToLocalTimeConverter}"/>
@@ -433,7 +436,7 @@
                                                                     </TextBlock.Text>
                                                                 </TextBlock>
                                                                 <TextBlock Grid.Column="1" Text="{Binding DurationSeconds, Converter={StaticResource SecondsToDurationConverter}}" 
-                                                                           FontSize="11" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextPrimary}" Margin="0,0,8,0" FontWeight="600" />
+                                                                           FontSize="12" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextPrimary}" Margin="0,0,8,0" FontWeight="600" />
                                                                 <Button Grid.Column="2" Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).DeleteTimeEntryCommand}" CommandParameter="{Binding}" 
                                                                         Background="Transparent" Padding="0" BorderThickness="0">
                                                                     <Button.Styles>
@@ -487,7 +490,7 @@
         <TabItem Header="Reports">
             <Border Padding="{DynamicResource SpacingXXLargeThickness}">
                 <StackPanel Spacing="{DynamicResource SpacingXLarge}">
-                    <TextBlock Margin="0 5" xml:space="preserve" Foreground="{DynamicResource TextSecondary}">This feature will be implemented in a future release</TextBlock>
+                    <TextBlock Margin="0 5" xml:space="preserve" Foreground="{DynamicResource TextSecondary}" FontSize="13">This feature will be implemented in a future release</TextBlock>
                 </StackPanel>
             </Border>
         </TabItem>
@@ -503,15 +506,15 @@
                     <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
                         <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Data Directory</TextBlock>
                         <TextBox Width="320" Text="{Binding DataDirectory, Mode=TwoWay}" />
-                        <Button Margin="8,0,0,0" Command="{Binding BrowseDataDirectoryCommand}" 
-                                Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}" 
-                                FontSize="12" FontWeight="500" Padding="8,6" CornerRadius="7" 
+                        <Button Margin="8,0,0,0" Command="{Binding BrowseDataDirectoryCommand}"
+                                Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
+                                FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
                                 VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
                             <TextBlock Text="Browse" />
                         </Button>
                         <Button Command="{Binding SaveSettingsCommand}" Margin="12,0,0,0"
                                 Background="{DynamicResource TealActive}" Foreground="White"
-                                FontSize="12" FontWeight="500" Padding="14,6" CornerRadius="7"
+                                FontSize="13" FontWeight="500" Padding="14,6" CornerRadius="7"
                                 VerticalAlignment="Center" BorderThickness="0">
                             <Button.Styles>
                                 <Style Selector="Button:pointerover /template/ ContentPresenter">
@@ -535,7 +538,7 @@
                         <TextBox Width="280" Text="{Binding BackupDirectory, Mode=TwoWay}" />
                         <Button Margin="8,0,0,0" Command="{Binding PickBackupFolderCommand}"
                                 Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
-                                FontSize="12" FontWeight="500" Padding="8,6" CornerRadius="7"
+                                FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
                                 VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
                             <TextBlock Text="Pick Folder" />
                         </Button>
@@ -569,17 +572,17 @@
 
                     <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
                         <Button Command="{Binding RestoreFromFolderCommand}"
-                                Background="{DynamicResource AmberWarning}" Foreground="White"
-                                FontSize="12" FontWeight="500" Padding="14,6" CornerRadius="7"
+                                Background="{DynamicResource AmberWarning}" Foreground="{DynamicResource Ink950}"
+                                FontSize="13" FontWeight="500" Padding="14,6" CornerRadius="7"
                                 VerticalAlignment="Center" BorderThickness="0">
                             <Button.Styles>
                                 <Style Selector="Button:pointerover /template/ ContentPresenter">
-                                    <Setter Property="Background" Value="{DynamicResource AmberHover}" />
+                                    <Setter Property="Background" Value="{DynamicResource AmberLight}" />
                                 </Style>
                             </Button.Styles>
                             <TextBlock Text="Restore from Folder" />
                         </Button>
-                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextTertiary}" FontSize="11">Select folder with settings.json and workledger.db</TextBlock>
+                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextTertiary}" FontSize="12">Select folder with settings.json and workledger.db</TextBlock>
                     </StackPanel>
                 </StackPanel>
             </Border>
@@ -591,10 +594,10 @@
             <Grid Margin="16,0">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="5">
                     <Ellipse Width="5" Height="5" Fill="{DynamicResource TealActive}" />
-                    <TextBlock Text="WorkLedger · running" FontSize="9" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextQuaternary}" LetterSpacing="0.12" />
+                    <TextBlock Text="WorkLedger · running" FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextQuaternary}" LetterSpacing="0.12" />
                 </StackPanel>
                 <TextBlock Text="offline-first" HorizontalAlignment="Right" VerticalAlignment="Center"
-                           FontSize="9" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextQuaternary}" LetterSpacing="0.12" />
+                           FontSize="10" FontFamily="{DynamicResource FontMono}" Foreground="{DynamicResource TextQuaternary}" LetterSpacing="0.12" />
             </Grid>
         </Border>
     </Grid>
