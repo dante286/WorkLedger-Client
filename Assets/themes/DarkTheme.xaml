@@ -48,7 +48,10 @@
     <Color x:Key="TextPrimary">#dce8f2</Color>
     <Color x:Key="TextSecondary">#8ba3be</Color>
     <Color x:Key="TextTertiary">#5a7190</Color>
-    <Color x:Key="TextQuaternary">#3d5166</Color>
+    <!-- Independent value (not a Slate-scale alias) tuned to clear 4.5:1 against Surface/Surface2/Background.
+         Note: TextTertiary itself only reaches ~3.7:1 here, so this ends up lighter than TextTertiary in
+         raw contrast terms - kept distinguishable as the more muted step via lower saturation instead. -->
+    <Color x:Key="TextQuaternary">#7d8a99</Color>
     
     <!-- Font Definitions -->
     <FontFamily x:Key="FontDisplay">avares://WorkLedger-Client/Assets/fonts#Manrope</FontFamily>
