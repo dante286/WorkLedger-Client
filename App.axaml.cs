@@ -59,7 +59,7 @@ namespace WorkLedger_Client
                 System.Diagnostics.Debug.WriteLine($"Database path: {dbPath}");
 
                 // Initialize services with settled paths
-                var localDb = new LocalDbService(dbPath);
+                var localDb = new LocalDbService(dbPath, appSettings.DeviceId);
                 var appState = new AppStateService();
                 var timerService = new TimerService(localDb, appState);
 

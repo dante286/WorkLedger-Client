@@ -3,7 +3,7 @@ using System;
 
 namespace WorkLedger_Client.Models
 {
-    public class TimeEntry
+    public class TimeEntry : IVersionedEntity
     {
         [PrimaryKey, AutoIncrement]
         public int Id { get; set; }
@@ -14,6 +14,8 @@ namespace WorkLedger_Client.Models
         public long? DurationSeconds { get; set; }
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public DateTime? UpdatedAt { get; set; }
+        public int Version { get; set; } = 1;
+        public string? OriginDeviceId { get; set; }
 
         [Ignore]
         public TimeSpan Duration => EndTime.HasValue ? EndTime.Value - StartTime : DateTime.UtcNow - StartTime;

@@ -16,6 +16,7 @@ namespace WorkLedger_Client.Services
         public string BackupDirectory { get; set; } = string.Empty;
         public BackupInterval BackupInterval { get; set; } = BackupInterval.Disabled;
         public bool BackupOnClose { get; set; } = false;
+        public string DeviceId { get; set; } = string.Empty;
     }
 
     public enum BackupInterval
@@ -104,7 +105,8 @@ namespace WorkLedger_Client.Services
                     var defaults = new AppSettings
                     {
                         DataDirectory = _dataDirectory,
-                        ApplicationVersion = AppSettings.CurrentApplicationVersion
+                        ApplicationVersion = AppSettings.CurrentApplicationVersion,
+                        DeviceId = Guid.NewGuid().ToString()
                     };
                     SaveSettings(defaults);
                     return defaults;
@@ -140,6 +142,13 @@ namespace WorkLedger_Client.Services
                 {
                     settings.BackupOnClose = true;
                     settings.BackupInterval = BackupInterval.Disabled;
+                    SaveSettings(settings);
+                }
+
+                // Mint and persist a stable per-install device ID for older settings files
+                if (string.IsNullOrWhiteSpace(settings.DeviceId))
+                {
+                    settings.DeviceId = Guid.NewGuid().ToString();
                     SaveSettings(settings);
                 }
 
