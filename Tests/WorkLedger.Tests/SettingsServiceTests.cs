@@ -88,5 +88,49 @@ namespace WorkLedger.Tests
 
             Assert.False(service.ValidateBackupSource(_tempDataDirectory));
         }
+
+        [Fact]
+        public void LoadSettings_OnFreshInstall_MintsDeviceId()
+        {
+            var service = new SettingsService(_tempDataDirectory);
+
+            var settings = service.LoadSettings();
+
+            Assert.False(string.IsNullOrWhiteSpace(settings.DeviceId));
+        }
+
+        [Fact]
+        public void LoadSettings_BackfillsMissingDeviceId_ForOlderSettingsFiles()
+        {
+            Directory.CreateDirectory(_tempDataDirectory);
+            var settingsPath = Path.Combine(_tempDataDirectory, SettingsService.SettingsFileName);
+            File.WriteAllText(settingsPath, """
+                {
+                    "Theme": "System",
+                    "DataDirectory": "",
+                    "ApplicationVersion": "1.0.0",
+                    "BackupDirectory": "",
+                    "BackupInterval": "Disabled",
+                    "BackupOnClose": false
+                }
+                """);
+
+            var service = new SettingsService(_tempDataDirectory);
+
+            var settings = service.LoadSettings();
+
+            Assert.False(string.IsNullOrWhiteSpace(settings.DeviceId));
+        }
+
+        [Fact]
+        public void LoadSettings_DeviceId_IsStableAcrossRepeatedLoads()
+        {
+            var service = new SettingsService(_tempDataDirectory);
+
+            var first = service.LoadSettings();
+            var second = service.LoadSettings();
+
+            Assert.Equal(first.DeviceId, second.DeviceId);
+        }
     }
 }

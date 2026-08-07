@@ -15,7 +15,7 @@ rather than getting its own file, so there are 7 plans covering the 8 original m
 | # | File | Ticket(s) | Depends on |
 |---|------|-----------|------------|
 | 1 | [01-housekeeping.md](01-housekeeping.md) | TBD | — |
-| 2 | [02-data-model-versioning.md](02-data-model-versioning.md) | TBD | 1 |
+| 2 | [02-data-model-versioning.md](02-data-model-versioning.md) | WL-73 | 1 |
 | 3 | [03-sync-queue-wiring.md](03-sync-queue-wiring.md) | TBD | 2 |
 | 4 | [04-sync-abstraction-orchestrator.md](04-sync-abstraction-orchestrator.md) | TBD | 2 (parallel with 3) |
 | 5 | [05-file-sync-provider.md](05-file-sync-provider.md) | TBD | 4 |

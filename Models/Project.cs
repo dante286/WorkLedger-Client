@@ -3,7 +3,7 @@ using System;
 
 namespace WorkLedger_Client.Models
 {
-    public class Project
+    public class Project : IVersionedEntity
     {
         [PrimaryKey, AutoIncrement]
         public int Id { get; set; }
@@ -18,5 +18,9 @@ namespace WorkLedger_Client.Models
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
         public DateTime? UpdatedAt { get; set; }
+
+        public int Version { get; set; } = 1;
+
+        public string? OriginDeviceId { get; set; }
     }
 }

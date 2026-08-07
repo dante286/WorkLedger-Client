@@ -9,12 +9,21 @@ namespace WorkLedger_Client.Services
     {
         private readonly SQLiteAsyncConnection _db;
 
-        public LocalDbService(string dbPath)
+        // Identifies which installation this instance is running as, stamped onto
+        // every row this instance writes so the sync orchestrator (Plan 4) can tell
+        // local writes from remote ones.
+        public string? DeviceId { get; }
+
+        // Fire-and-forget initialization is still kicked off from the constructor for
+        // normal app startup, but the task is exposed so callers that need the schema
+        // and migration backfill to be complete first (e.g. tests) can await it.
+        public Task Initialization { get; }
+
+        public LocalDbService(string dbPath, string? deviceId = null)
         {
             _db = new SQLiteAsyncConnection(dbPath);
-
-            // Fire-and-forget initialization, explicitly discarding the task
-            _ = InitializeAsync();
+            DeviceId = deviceId;
+            Initialization = InitializeAsync();
         }
 
         private async Task InitializeAsync()
@@ -23,6 +32,44 @@ namespace WorkLedger_Client.Services
             await _db.CreateTableAsync<TaskItem>();
             await _db.CreateTableAsync<TimeEntry>();
             await _db.CreateTableAsync<SyncQueue>();
+
+            await BackfillVersioningAsync<Project>();
+            await BackfillVersioningAsync<TaskItem>();
+            await BackfillVersioningAsync<TimeEntry>();
+        }
+
+        // sqlite-net-pcl's CreateTableAsync adds missing columns to an existing table via
+        // ALTER TABLE, but leaves pre-existing rows with Version as SQL NULL rather than the
+        // C# initializer's 1 (ALTER TABLE ADD COLUMN has no default here). Guard on NULL, not
+        // just 0 — "Version = 0" never matches a NULL column in SQL. Backfills those rows
+        // exactly once: the guard SELECT is a cheap no-write no-op on fresh installs and
+        // already-migrated databases.
+        private async Task BackfillVersioningAsync<T>() where T : class, IVersionedEntity, new()
+        {
+            var tableName = typeof(T).Name;
+            var unmigratedCount = await _db.ExecuteScalarAsync<int>(
+                $"SELECT COUNT(*) FROM {tableName} WHERE Version IS NULL OR Version = 0");
+
+            if (unmigratedCount == 0)
+                return;
+
+            await _db.ExecuteAsync(
+                $"UPDATE {tableName} SET Version = 1, OriginDeviceId = ? WHERE Version IS NULL OR Version = 0",
+                DeviceId);
+        }
+
+        private void StampForInsert(IVersionedEntity entity)
+        {
+            if (entity.Version <= 0)
+                entity.Version = 1;
+
+            entity.OriginDeviceId = DeviceId;
+        }
+
+        private void StampForUpdate(IVersionedEntity entity)
+        {
+            entity.Version++;
+            entity.OriginDeviceId = DeviceId;
         }
 
         // Generic helpers
@@ -62,8 +109,12 @@ namespace WorkLedger_Client.Services
         public Task<int> SaveProjectAsync(Project project)
         {
             if (project.Id == 0)
+            {
+                StampForInsert(project);
                 return _db.InsertAsync(project);
+            }
 
+            StampForUpdate(project);
             return _db.UpdateAsync(project);
         }
 
@@ -85,8 +136,12 @@ namespace WorkLedger_Client.Services
         public Task<int> SaveTaskAsync(TaskItem task)
         {
             if (task.Id == 0)
+            {
+                StampForInsert(task);
                 return _db.InsertAsync(task);
+            }
 
+            StampForUpdate(task);
             return _db.UpdateAsync(task);
         }
 
@@ -107,8 +162,12 @@ namespace WorkLedger_Client.Services
         public Task<int> SaveTimeEntryAsync(TimeEntry entry)
         {
             if (entry.Id == 0)
+            {
+                StampForInsert(entry);
                 return _db.InsertAsync(entry);
+            }
 
+            StampForUpdate(entry);
             return _db.UpdateAsync(entry);
         }
 
