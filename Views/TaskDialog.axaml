@@ -8,10 +8,10 @@
         FontFamily="{DynamicResource FontBody}">
 
     <StackPanel Margin="12" Spacing="8">
-        <TextBlock Text="Name" FontFamily="{DynamicResource FontBody}" Foreground="{DynamicResource TextSecondary}" />
+        <TextBlock Text="Name" FontFamily="{DynamicResource FontBody}" Foreground="{DynamicResource TextSecondary}" FontSize="13" />
         <TextBox x:Name="NameBox" Background="{DynamicResource Surface2}" BorderBrush="{DynamicResource Border}" Foreground="{DynamicResource TextPrimary}" />
 
-        <TextBlock Text="Notes" FontFamily="{DynamicResource FontBody}" Foreground="{DynamicResource TextSecondary}" />
+        <TextBlock Text="Notes" FontFamily="{DynamicResource FontBody}" Foreground="{DynamicResource TextSecondary}" FontSize="13" />
         <TextBox x:Name="NotesBox" AcceptsReturn="True" Height="80" Background="{DynamicResource Surface2}" BorderBrush="{DynamicResource Border}" Foreground="{DynamicResource TextPrimary}" />
 
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">

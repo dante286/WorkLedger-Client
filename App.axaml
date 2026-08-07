@@ -19,6 +19,19 @@
                 <!-- Initial theme for design time and startup -->
                 <ResourceInclude Source="avares://WorkLedger-Client/Assets/themes/DarkTheme.xaml" />
             </ResourceDictionary.MergedDictionaries>
+
+            <!-- FluentTheme's native accent color (ListBoxItem selection, CheckBox/ToggleButton
+                 checked state, focus rings, ...) defaults to OS blue unless overridden here.
+                 Replace it with the brand teal so native controls match the app's palette
+                 instead of showing a clashing blue. Same value in both themes, so this lives
+                 outside the swappable Light/Dark theme dictionaries. -->
+            <Color x:Key="SystemAccentColor">#0d9488</Color>
+            <Color x:Key="SystemAccentColorLight1">#14b8a8</Color>
+            <Color x:Key="SystemAccentColorLight2">#2dd4bf</Color>
+            <Color x:Key="SystemAccentColorLight3">#5eead4</Color>
+            <Color x:Key="SystemAccentColorDark1">#0f766e</Color>
+            <Color x:Key="SystemAccentColorDark2">#115e59</Color>
+            <Color x:Key="SystemAccentColorDark3">#134e4a</Color>
         </ResourceDictionary>
     </Application.Resources>
 </Application>
