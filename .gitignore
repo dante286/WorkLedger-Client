@@ -1,8 +1,8 @@
 .vs/*
 .idea/*
 
-obj/*
-bin/*
+obj/
+bin/
 *.user
 .aider*
 
