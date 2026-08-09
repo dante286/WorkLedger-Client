@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using SQLite;
@@ -109,6 +110,139 @@ namespace WorkLedger.Tests
             Assert.NotNull(stored);
             Assert.Equal(2, stored!.Version);
             Assert.Equal(TestDeviceId, stored.OriginDeviceId);
+        }
+
+        [Fact]
+        public async Task SaveProjectAsync_WithZeroId_EnqueuesCreateSyncEntry()
+        {
+            var project = new Project { Name = "New Project" };
+
+            await _service.SaveProjectAsync(project);
+
+            var queue = await _service.GetAllAsync<SyncQueue>();
+            var entry = Assert.Single(queue);
+            Assert.Equal("project", entry.EntityType);
+            Assert.Equal(project.Id, entry.EntityId);
+            Assert.Equal("create", entry.Operation);
+            Assert.False(entry.IsSynced);
+            Assert.NotNull(entry.PayloadJson);
+        }
+
+        [Fact]
+        public async Task SaveProjectAsync_WithExistingId_EnqueuesUpdateSyncEntry()
+        {
+            var project = new Project { Name = "Original" };
+            await _service.SaveProjectAsync(project);
+
+            project.Name = "Updated";
+            await _service.SaveProjectAsync(project);
+
+            var queue = await _service.GetAllAsync<SyncQueue>();
+            Assert.Equal(2, queue.Count);
+            var updateEntry = queue.Single(q => q.Operation == "update");
+            Assert.Equal("project", updateEntry.EntityType);
+            Assert.Equal(project.Id, updateEntry.EntityId);
+        }
+
+        [Fact]
+        public async Task DeleteProjectAsync_EnqueuesDeleteSyncEntry()
+        {
+            var project = new Project { Name = "To Delete" };
+            await _service.SaveProjectAsync(project);
+
+            await _service.DeleteProjectAsync(project);
+
+            var queue = await _service.GetAllAsync<SyncQueue>();
+            var deleteEntry = Assert.Single(queue, q => q.Operation == "delete");
+            Assert.Equal("project", deleteEntry.EntityType);
+            Assert.Equal(project.Id, deleteEntry.EntityId);
+            Assert.NotNull(deleteEntry.PayloadJson);
+        }
+
+        [Fact]
+        public async Task SaveTaskAsync_WithZeroId_EnqueuesCreateSyncEntry()
+        {
+            var task = new TaskItem { Name = "New Task", ProjectId = 1 };
+
+            await _service.SaveTaskAsync(task);
+
+            var queue = await _service.GetAllAsync<SyncQueue>();
+            var entry = Assert.Single(queue);
+            Assert.Equal("task", entry.EntityType);
+            Assert.Equal(task.Id, entry.EntityId);
+            Assert.Equal("create", entry.Operation);
+        }
+
+        [Fact]
+        public async Task SaveTaskAsync_WithExistingId_EnqueuesUpdateSyncEntry()
+        {
+            var task = new TaskItem { Name = "Original", ProjectId = 1 };
+            await _service.SaveTaskAsync(task);
+
+            task.Name = "Updated";
+            await _service.SaveTaskAsync(task);
+
+            var queue = await _service.GetAllAsync<SyncQueue>();
+            var updateEntry = Assert.Single(queue, q => q.Operation == "update");
+            Assert.Equal("task", updateEntry.EntityType);
+            Assert.Equal(task.Id, updateEntry.EntityId);
+        }
+
+        [Fact]
+        public async Task DeleteTaskAsync_EnqueuesDeleteSyncEntry()
+        {
+            var task = new TaskItem { Name = "To Delete", ProjectId = 1 };
+            await _service.SaveTaskAsync(task);
+
+            await _service.DeleteTaskAsync(task);
+
+            var queue = await _service.GetAllAsync<SyncQueue>();
+            var deleteEntry = Assert.Single(queue, q => q.Operation == "delete");
+            Assert.Equal("task", deleteEntry.EntityType);
+            Assert.Equal(task.Id, deleteEntry.EntityId);
+        }
+
+        [Fact]
+        public async Task SaveTimeEntryAsync_WithZeroId_EnqueuesCreateSyncEntry()
+        {
+            var entry = new TimeEntry { TaskItemId = 1, StartTime = DateTime.UtcNow };
+
+            await _service.SaveTimeEntryAsync(entry);
+
+            var queue = await _service.GetAllAsync<SyncQueue>();
+            var queueEntry = Assert.Single(queue);
+            Assert.Equal("timeentry", queueEntry.EntityType);
+            Assert.Equal(entry.Id, queueEntry.EntityId);
+            Assert.Equal("create", queueEntry.Operation);
+        }
+
+        [Fact]
+        public async Task SaveTimeEntryAsync_WithExistingId_EnqueuesUpdateSyncEntry()
+        {
+            var entry = new TimeEntry { TaskItemId = 1, StartTime = DateTime.UtcNow };
+            await _service.SaveTimeEntryAsync(entry);
+
+            entry.EndTime = DateTime.UtcNow;
+            await _service.SaveTimeEntryAsync(entry);
+
+            var queue = await _service.GetAllAsync<SyncQueue>();
+            var updateEntry = Assert.Single(queue, q => q.Operation == "update");
+            Assert.Equal("timeentry", updateEntry.EntityType);
+            Assert.Equal(entry.Id, updateEntry.EntityId);
+        }
+
+        [Fact]
+        public async Task DeleteTimeEntryAsync_EnqueuesDeleteSyncEntry()
+        {
+            var entry = new TimeEntry { TaskItemId = 1, StartTime = DateTime.UtcNow };
+            await _service.SaveTimeEntryAsync(entry);
+
+            await _service.DeleteTimeEntryAsync(entry);
+
+            var queue = await _service.GetAllAsync<SyncQueue>();
+            var deleteEntry = Assert.Single(queue, q => q.Operation == "delete");
+            Assert.Equal("timeentry", deleteEntry.EntityType);
+            Assert.Equal(entry.Id, deleteEntry.EntityId);
         }
 
         [Fact]
