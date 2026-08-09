@@ -1,5 +1,6 @@
 ﻿using SQLite;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Threading.Tasks;
 using WorkLedger_Client.Models;
 
@@ -7,6 +8,22 @@ namespace WorkLedger_Client.Services
 {
     public class LocalDbService
     {
+        // Sync queue string conventions. Plan 4's orchestrator switches on these, so keep
+        // call sites using these constants rather than ad-hoc literals.
+        private static class EntityTypes
+        {
+            public const string Project = "project";
+            public const string Task = "task";
+            public const string TimeEntry = "timeentry";
+        }
+
+        private static class SyncOperations
+        {
+            public const string Create = "create";
+            public const string Update = "update";
+            public const string Delete = "delete";
+        }
+
         private readonly SQLiteAsyncConnection _db;
 
         // Identifies which installation this instance is running as, stamped onto
@@ -72,6 +89,22 @@ namespace WorkLedger_Client.Services
             entity.OriginDeviceId = DeviceId;
         }
 
+        // Builds the SyncQueue row queued alongside every entity mutation. Payload is the
+        // entity itself (post-stamping) so Plan 4's orchestrator has Id/Version/OriginDeviceId
+        // to reconcile against, including for deletes (a null payload can't distinguish
+        // "row doesn't exist" from "no data available").
+        private static SyncQueue BuildSyncQueueEntry(string entityType, int entityId, string operation, object? payload)
+        {
+            return new SyncQueue
+            {
+                EntityType = entityType,
+                EntityId = entityId,
+                Operation = operation,
+                PayloadJson = payload is null ? null : JsonSerializer.Serialize(payload),
+                IsSynced = false
+            };
+        }
+
         // Generic helpers
         public Task<int> InsertAsync<T>(T item) where T : new()
             => _db.InsertAsync(item);
@@ -106,21 +139,33 @@ namespace WorkLedger_Client.Services
                             .FirstOrDefaultAsync();
         }
 
-        public Task<int> SaveProjectAsync(Project project)
+        public async Task<int> SaveProjectAsync(Project project)
         {
-            if (project.Id == 0)
-            {
+            var isInsert = project.Id == 0;
+            if (isInsert)
                 StampForInsert(project);
-                return _db.InsertAsync(project);
-            }
+            else
+                StampForUpdate(project);
 
-            StampForUpdate(project);
-            return _db.UpdateAsync(project);
+            var rowsAffected = 0;
+            await _db.RunInTransactionAsync(conn =>
+            {
+                rowsAffected = isInsert ? conn.Insert(project) : conn.Update(project);
+                var operation = isInsert ? SyncOperations.Create : SyncOperations.Update;
+                conn.Insert(BuildSyncQueueEntry(EntityTypes.Project, project.Id, operation, project));
+            });
+            return rowsAffected;
         }
 
-        public Task<int> DeleteProjectAsync(Project project)
+        public async Task<int> DeleteProjectAsync(Project project)
         {
-            return _db.DeleteAsync(project);
+            var rowsAffected = 0;
+            await _db.RunInTransactionAsync(conn =>
+            {
+                rowsAffected = conn.Delete(project);
+                conn.Insert(BuildSyncQueueEntry(EntityTypes.Project, project.Id, SyncOperations.Delete, project));
+            });
+            return rowsAffected;
         }
 
         // TaskItem-specific methods
@@ -133,21 +178,33 @@ namespace WorkLedger_Client.Services
                       .ToListAsync();
         }
 
-        public Task<int> SaveTaskAsync(TaskItem task)
+        public async Task<int> SaveTaskAsync(TaskItem task)
         {
-            if (task.Id == 0)
-            {
+            var isInsert = task.Id == 0;
+            if (isInsert)
                 StampForInsert(task);
-                return _db.InsertAsync(task);
-            }
+            else
+                StampForUpdate(task);
 
-            StampForUpdate(task);
-            return _db.UpdateAsync(task);
+            var rowsAffected = 0;
+            await _db.RunInTransactionAsync(conn =>
+            {
+                rowsAffected = isInsert ? conn.Insert(task) : conn.Update(task);
+                var operation = isInsert ? SyncOperations.Create : SyncOperations.Update;
+                conn.Insert(BuildSyncQueueEntry(EntityTypes.Task, task.Id, operation, task));
+            });
+            return rowsAffected;
         }
 
-        public Task<int> DeleteTaskAsync(TaskItem task)
+        public async Task<int> DeleteTaskAsync(TaskItem task)
         {
-            return _db.DeleteAsync(task);
+            var rowsAffected = 0;
+            await _db.RunInTransactionAsync(conn =>
+            {
+                rowsAffected = conn.Delete(task);
+                conn.Insert(BuildSyncQueueEntry(EntityTypes.Task, task.Id, SyncOperations.Delete, task));
+            });
+            return rowsAffected;
         }
 
         // TimeEntry-specific methods
@@ -159,21 +216,33 @@ namespace WorkLedger_Client.Services
                       .ToListAsync();
         }
 
-        public Task<int> SaveTimeEntryAsync(TimeEntry entry)
+        public async Task<int> SaveTimeEntryAsync(TimeEntry entry)
         {
-            if (entry.Id == 0)
-            {
+            var isInsert = entry.Id == 0;
+            if (isInsert)
                 StampForInsert(entry);
-                return _db.InsertAsync(entry);
-            }
+            else
+                StampForUpdate(entry);
 
-            StampForUpdate(entry);
-            return _db.UpdateAsync(entry);
+            var rowsAffected = 0;
+            await _db.RunInTransactionAsync(conn =>
+            {
+                rowsAffected = isInsert ? conn.Insert(entry) : conn.Update(entry);
+                var operation = isInsert ? SyncOperations.Create : SyncOperations.Update;
+                conn.Insert(BuildSyncQueueEntry(EntityTypes.TimeEntry, entry.Id, operation, entry));
+            });
+            return rowsAffected;
         }
 
-        public Task<int> DeleteTimeEntryAsync(TimeEntry entry)
+        public async Task<int> DeleteTimeEntryAsync(TimeEntry entry)
         {
-            return _db.DeleteAsync(entry);
+            var rowsAffected = 0;
+            await _db.RunInTransactionAsync(conn =>
+            {
+                rowsAffected = conn.Delete(entry);
+                conn.Insert(BuildSyncQueueEntry(EntityTypes.TimeEntry, entry.Id, SyncOperations.Delete, entry));
+            });
+            return rowsAffected;
         }
 
 
