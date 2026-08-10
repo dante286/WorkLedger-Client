@@ -24,6 +24,7 @@ namespace WorkLedger_Client.ViewModels
             BackupDirectory = settings.BackupDirectory ?? string.Empty;
             BackupInterval = settings.BackupInterval;
             BackupOnClose = settings.BackupOnClose;
+            SyncFolderPath = settings.SyncFolderPath ?? string.Empty;
             ApplicationVersion = string.IsNullOrWhiteSpace(settings.ApplicationVersion)
                 ? WorkLedger_Client.Services.AppSettings.CurrentApplicationVersion
                 : settings.ApplicationVersion;

@@ -108,6 +108,9 @@ namespace WorkLedger_Client.ViewModels
         private bool _backupOnClose;
 
         [ObservableProperty]
+        private string _syncFolderPath = string.Empty;
+
+        [ObservableProperty]
         private string _applicationVersion = WorkLedger_Client.Services.AppSettings.CurrentApplicationVersion;
 
         
@@ -153,6 +156,7 @@ namespace WorkLedger_Client.ViewModels
                     BackupDirectory = BackupDirectory,
                     BackupInterval = BackupInterval,
                     BackupOnClose = BackupOnClose,
+                    SyncFolderPath = SyncFolderPath,
                     ApplicationVersion = ApplicationVersion
                 };
                 _settingsService!.SaveSettings(settings);
@@ -203,6 +207,11 @@ namespace WorkLedger_Client.ViewModels
             TriggerAutosave();
         }
 
+        partial void OnSyncFolderPathChanged(string value)
+        {
+            TriggerAutosave();
+        }
+
         private void TriggerAutosave()
         {
             // Cancel previous scheduled save
@@ -226,6 +235,7 @@ namespace WorkLedger_Client.ViewModels
                         BackupDirectory = BackupDirectory,
                         BackupInterval = BackupInterval,
                         BackupOnClose = BackupOnClose,
+                        SyncFolderPath = SyncFolderPath,
                         ApplicationVersion = ApplicationVersion
                     };
 
@@ -670,6 +680,7 @@ namespace WorkLedger_Client.ViewModels
                             DataDirectory = path,
                             BackupDirectory = BackupDirectory,
                             BackupInterval = BackupInterval,
+                            SyncFolderPath = SyncFolderPath,
                             ApplicationVersion = ApplicationVersion
                         };
                         _settingsService.SaveSettings(settings);
@@ -724,6 +735,44 @@ namespace WorkLedger_Client.ViewModels
             {
                 _toastService?.ShowToast("Failed to pick backup folder", 3000);
                 System.Diagnostics.Debug.WriteLine($"Error picking backup folder: {ex.Message}");
+            }
+        }
+
+        [RelayCommand]
+        private async Task PickSyncFolderAsync()
+        {
+            var desktop = Avalonia.Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime;
+            if (desktop?.MainWindow == null) return;
+
+            try
+            {
+                var topLevel = TopLevel.GetTopLevel(desktop.MainWindow);
+                if (topLevel?.StorageProvider == null)
+                    return;
+
+                var picked = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { AllowMultiple = false });
+                if (picked == null || picked.Count == 0) return;
+
+                var path = picked[0]?.Path?.LocalPath;
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    _toastService?.ShowToast("Selected folder has no accessible local path", 3000);
+                    return;
+                }
+
+                if (_settingsService != null && !_settingsService.ValidateSyncFolder(path))
+                {
+                    _toastService?.ShowToast("Selected folder is not usable for sync (not writable)", 3000);
+                    return;
+                }
+
+                SyncFolderPath = path;
+                _toastService?.ShowToast("Sync folder selected", 1400);
+            }
+            catch (Exception ex)
+            {
+                _toastService?.ShowToast("Failed to pick sync folder", 3000);
+                System.Diagnostics.Debug.WriteLine($"Error picking sync folder: {ex.Message}");
             }
         }
 
