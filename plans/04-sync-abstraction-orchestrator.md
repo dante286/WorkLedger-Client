@@ -90,6 +90,25 @@ Two existing patterns in this codebase to mirror:
 - Unit tests cover: successful push marking rows synced, remote-wins merge, local-wins merge, self-echo
   skip, and remote delete — all passing.
 
+## Addendum (WL-47/54/56, WL-49/60): SyncId-keyed merges + SyncQueue pruning
+
+Gap review after this plan's first pass (WL-47, WL-54, WL-56) found that keying `RemoteChange.EntityId` /
+merge lookups off the local autoincrement `Id` breaks the moment two offline devices independently create a
+row that lands on the same local `Id` — the orchestrator would treat them as the same entity and last-write-wins
+one away. `RemoteChange.EntityId` is now `Guid` and merge lookups (`ApplyProjectChangeAsync` etc.) match local
+rows by `SyncId`, never `Id`. When a `RemoteChange`'s `SyncId` has no local match, the incoming entity's `Id` is
+left at `0` so `SaveXAsync` inserts a new row instead of updating a nonexistent one — this fully resolves what
+was previously documented here as a known limitation. A regression test
+(`SyncOrchestratorTests.RunSyncAsync_TwoDevicesWithCollidingLocalIds_DoNotCollideAfterSync`) covers this
+directly, per WL-56.
+
+Separately, WL-49/WL-60 flagged that nothing in Plans 3 or 4 ever prunes `SyncQueue` rows once
+`IsSynced = true`, so the table would grow unbounded for the life of an install. `RunSyncAsync` now deletes
+already-synced rows at the end of every cycle (`PruneSyncedQueueAsync`) — since it runs periodically via
+`ConfigureSyncInterval`, this satisfies "periodically prune" without a separate schedule. WL-49's other half
+(unbounded `<syncFolder>/changes/*.json` growth) is `FileSyncProvider`'s concern — see the addendum in
+`plans/05-file-sync-provider.md`.
+
 ## Suggested commit message
 
 ```

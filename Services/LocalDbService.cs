@@ -1,5 +1,7 @@
 ﻿using SQLite;
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using WorkLedger_Client.Models;
@@ -9,15 +11,16 @@ namespace WorkLedger_Client.Services
     public class LocalDbService
     {
         // Sync queue string conventions. Plan 4's orchestrator switches on these, so keep
-        // call sites using these constants rather than ad-hoc literals.
-        private static class EntityTypes
+        // call sites using these constants rather than ad-hoc literals. Internal (not
+        // private) so SyncOrchestrator can reuse them instead of duplicating literals.
+        internal static class EntityTypes
         {
             public const string Project = "project";
             public const string Task = "task";
             public const string TimeEntry = "timeentry";
         }
 
-        private static class SyncOperations
+        internal static class SyncOperations
         {
             public const string Create = "create";
             public const string Update = "update";
@@ -53,6 +56,10 @@ namespace WorkLedger_Client.Services
             await BackfillVersioningAsync<Project>();
             await BackfillVersioningAsync<TaskItem>();
             await BackfillVersioningAsync<TimeEntry>();
+
+            await BackfillSyncIdsAsync<Project>();
+            await BackfillSyncIdsAsync<TaskItem>();
+            await BackfillSyncIdsAsync<TimeEntry>();
         }
 
         // sqlite-net-pcl's CreateTableAsync adds missing columns to an existing table via
@@ -75,10 +82,40 @@ namespace WorkLedger_Client.Services
                 DeviceId);
         }
 
+        // Unlike BackfillVersioningAsync, each row needs a distinct value, so this can't be a
+        // single bulk UPDATE - each Id needing backfill gets its own UPDATE. Must detect via
+        // raw SQL against the actual column, not by loading rows through the ORM and checking
+        // row.SyncId == Guid.Empty: sqlite-net-pcl leaves a mapped property untouched when the
+        // underlying column is NULL, so a freshly-constructed row's C# property initializer
+        // (Guid.NewGuid()) would still be sitting there and never look empty. See WL-47.
+        private async Task BackfillSyncIdsAsync<T>() where T : class, IVersionedEntity, new()
+        {
+            var tableName = typeof(T).Name;
+            var idsNeedingBackfill = await _db.QueryAsync<IdOnly>($"SELECT Id FROM {tableName} WHERE SyncId IS NULL");
+
+            foreach (var row in idsNeedingBackfill)
+            {
+                await _db.ExecuteAsync(
+                    $"UPDATE {tableName} SET SyncId = ? WHERE Id = ?", Guid.NewGuid(), row.Id);
+            }
+        }
+
+        // Column-projection DTO for BackfillSyncIdsAsync's "which rows are missing a SyncId"
+        // query - deliberately not one of the real entity types, since selecting only Id
+        // through the ORM into e.g. Project would otherwise run into the same NULL-leaves-the-
+        // constructor-default problem BackfillSyncIdsAsync exists to avoid.
+        private class IdOnly
+        {
+            public int Id { get; set; }
+        }
+
         private void StampForInsert(IVersionedEntity entity)
         {
             if (entity.Version <= 0)
                 entity.Version = 1;
+
+            if (entity.SyncId == Guid.Empty)
+                entity.SyncId = Guid.NewGuid();
 
             entity.OriginDeviceId = DeviceId;
         }
@@ -93,7 +130,7 @@ namespace WorkLedger_Client.Services
         // entity itself (post-stamping) so Plan 4's orchestrator has Id/Version/OriginDeviceId
         // to reconcile against, including for deletes (a null payload can't distinguish
         // "row doesn't exist" from "no data available").
-        private static SyncQueue BuildSyncQueueEntry(string entityType, int entityId, string operation, object? payload)
+        private static SyncQueue BuildSyncQueueEntry(string entityType, Guid entityId, string operation, object? payload)
         {
             return new SyncQueue
             {
@@ -152,7 +189,7 @@ namespace WorkLedger_Client.Services
             {
                 rowsAffected = isInsert ? conn.Insert(project) : conn.Update(project);
                 var operation = isInsert ? SyncOperations.Create : SyncOperations.Update;
-                conn.Insert(BuildSyncQueueEntry(EntityTypes.Project, project.Id, operation, project));
+                conn.Insert(BuildSyncQueueEntry(EntityTypes.Project, project.SyncId, operation, project));
             });
             return rowsAffected;
         }
@@ -163,7 +200,7 @@ namespace WorkLedger_Client.Services
             await _db.RunInTransactionAsync(conn =>
             {
                 rowsAffected = conn.Delete(project);
-                conn.Insert(BuildSyncQueueEntry(EntityTypes.Project, project.Id, SyncOperations.Delete, project));
+                conn.Insert(BuildSyncQueueEntry(EntityTypes.Project, project.SyncId, SyncOperations.Delete, project));
             });
             return rowsAffected;
         }
@@ -191,7 +228,7 @@ namespace WorkLedger_Client.Services
             {
                 rowsAffected = isInsert ? conn.Insert(task) : conn.Update(task);
                 var operation = isInsert ? SyncOperations.Create : SyncOperations.Update;
-                conn.Insert(BuildSyncQueueEntry(EntityTypes.Task, task.Id, operation, task));
+                conn.Insert(BuildSyncQueueEntry(EntityTypes.Task, task.SyncId, operation, task));
             });
             return rowsAffected;
         }
@@ -202,7 +239,7 @@ namespace WorkLedger_Client.Services
             await _db.RunInTransactionAsync(conn =>
             {
                 rowsAffected = conn.Delete(task);
-                conn.Insert(BuildSyncQueueEntry(EntityTypes.Task, task.Id, SyncOperations.Delete, task));
+                conn.Insert(BuildSyncQueueEntry(EntityTypes.Task, task.SyncId, SyncOperations.Delete, task));
             });
             return rowsAffected;
         }
@@ -229,7 +266,7 @@ namespace WorkLedger_Client.Services
             {
                 rowsAffected = isInsert ? conn.Insert(entry) : conn.Update(entry);
                 var operation = isInsert ? SyncOperations.Create : SyncOperations.Update;
-                conn.Insert(BuildSyncQueueEntry(EntityTypes.TimeEntry, entry.Id, operation, entry));
+                conn.Insert(BuildSyncQueueEntry(EntityTypes.TimeEntry, entry.SyncId, operation, entry));
             });
             return rowsAffected;
         }
@@ -240,7 +277,7 @@ namespace WorkLedger_Client.Services
             await _db.RunInTransactionAsync(conn =>
             {
                 rowsAffected = conn.Delete(entry);
-                conn.Insert(BuildSyncQueueEntry(EntityTypes.TimeEntry, entry.Id, SyncOperations.Delete, entry));
+                conn.Insert(BuildSyncQueueEntry(EntityTypes.TimeEntry, entry.SyncId, SyncOperations.Delete, entry));
             });
             return rowsAffected;
         }

@@ -22,5 +22,8 @@ namespace WorkLedger_Client.Models
         public int Version { get; set; } = 1;
 
         public string? OriginDeviceId { get; set; }
+
+        [Indexed]
+        public Guid SyncId { get; set; } = Guid.NewGuid();
     }
 }

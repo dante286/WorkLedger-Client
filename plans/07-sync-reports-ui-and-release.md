@@ -14,6 +14,19 @@ By the time this plan starts, Plans 4–6 have produced: `SyncOrchestrator` (Pla
 of that is reachable from the UI yet. This plan adds the missing `SyncMode` switch and wires the whole stack
 together — this is where `SyncOrchestrator` actually gets instantiated and driven for the first time.
 
+**Recommended prerequisite (WL-52/WL-67):** this plan adds yet another constructor dependency to
+`MainWindowViewModel` (a held `SyncOrchestrator`, needed by `SyncNowCommand`) on top of the existing
+three-constructor mess described in `CLAUDE.md`'s "Known inconsistency" section. WL-52 flags this plan by name
+as the thing that makes that mess worse. Land WL-67 (consolidating the 5-arg/6-arg constructors into one
+canonical constructor) *before* starting this plan's Sync UI work, not after — threading `SyncOrchestrator`
+through the current constructor soup first and cleaning up later just means redoing the same edit twice.
+Doesn't have to be all of WL-52 (WL-66's dead-constructor removal and WL-68's `TaskItemViewModel` abstraction
+aren't blocking), just WL-67.
+
+**Folded in from gap review (WL-50, WL-51):** two tickets found reviewing this plan's original scope argued
+for pulling their work *into* this plan rather than leaving it deferred — see the new scope items below and
+the note under "Out of scope."
+
 The Settings tab's existing **Backup** section (`Views/MainWindow.axaml:533-560`+) is the template to clone:
 theme/data-directory/version fields above it, then a bolded section header (`FontWeight="600"`), then rows of
 label + control + inline actions. A **Sync** section should follow directly after it in the same visual
@@ -85,9 +98,17 @@ during this plan whether the constant needs manual updating or should be added t
      computed property comparing `SyncMode`) rather than hiding/showing via code-behind.
    - Read-only `LastSyncedAt` display.
    - A `Sync Now` button bound to `SyncNowCommand`, styled like the existing `Save`/`Browse` buttons.
+6. **Pre-merge safety backup (WL-51: WL-64 + WL-65).** `SyncOrchestrator`'s last-write-wins merge applies a
+   remote change directly via `SaveXAsync`/`DeleteXAsync` whenever the remote `Version` wins, with no undo
+   path if a merge (or a misbehaving remote peer/provider) turns out wrong. Trigger `SettingsService`'s
+   existing `CreateBackupAsync` before `SyncOrchestrator` applies its *first* remote-wins overwrite/delete in
+   a given `RunSyncAsync()` call — not before the whole call, since most runs won't ever hit this path, and
+   not once per overwrite, since a `RunSyncAsync()` call typically hits 0 or a handful of them at once. Add a
+   setting (e.g. `PreMergeBackupMode`: `Always` / `Never` / `OncePerSession`) to control this, following the
+   `BackupInterval`-enum pattern, exposed in the new Sync settings section alongside `SyncMode`.
 
 ### Reports UI
-6. **Replace the Reports tab stub** (`Views/MainWindow.axaml:490-496`) with a real summary view backed by a
+7. **Replace the Reports tab stub** (`Views/MainWindow.axaml:490-496`) with a real summary view backed by a
    new `ReportsViewModel` (or additional properties/commands on `MainWindowViewModel` if this codebase's
    convention of "one big god-viewmodel" — per `CLAUDE.md`'s architecture notes — is intentionally being kept;
    default to extending `MainWindowViewModel` for consistency with the existing pattern unless the user
@@ -103,15 +124,26 @@ during this plan whether the constant needs manual updating or should be added t
      a reasonable single-view synthesis of both).
    - Keep this read-only and derived entirely from existing `LocalDbService` query methods — no new
      persisted models or schema changes needed for this milestone.
-7. **Tests**: unit-test the report aggregation logic (given a set of projects/tasks/time entries, the
-   per-project and per-task weekly sums are computed correctly), independent of the UI.
+8. **CSV export (WL-50: WL-62 + WL-63).** Add an export action (button per view, or one export covering
+   both) that writes the currently-displayed weekly per-project and per-task summaries to CSV via a save-file
+   dialog (`topLevel.StorageProvider.SaveFilePickerAsync`, same `TopLevel.GetTopLevel(desktop.MainWindow)`
+   pattern already used for the folder pickers). This aggregation is entirely local/client-side (item 7 above
+   computes it from `LocalDbService` directly), so — per WL-50's own reasoning — export doesn't need to wait
+   on a backend or on Plan 6's `ApiSyncProvider`; it's a client-only feature layered on item 7's data. JSON
+   export was mentioned in the ticket title but isn't in `README.md`'s "optional export endpoints" description
+   of the feature — CSV is the concrete ask (WL-62/WL-63); skip JSON unless it turns out to be trivial to add
+   alongside.
+9. **Tests**: unit-test the report aggregation logic (given a set of projects/tasks/time entries, the
+   per-project and per-task weekly sums are computed correctly) and the CSV export (given a computed summary,
+   the written CSV has the expected rows/columns) — both independent of the UI.
 
 ### Release
-8. Update `README.md`'s status section (`README.md:15-19`, the "🚧 In Progress" list currently naming "Sync
+10. Update `README.md`'s status section (`README.md:15-19`, the "🚧 In Progress" list currently naming "Sync
    engine (placeholder directory)") to reflect what actually landed: file-based sync live, API-based sync
-   implemented-but-unconnected (no real backend yet), Reports tab implemented. Update the `Auth/`, `Sync/`,
-   `LocalDb/` placeholder note (`README.md:28`) since `Sync/` is no longer just a placeholder.
-9. Confirm all of Plans 1–6 (M0–M5 equivalent) are merged to `main`, then let Release Please pick up the
+   implemented-but-unconnected (no real backend yet), Reports tab implemented (with CSV export). Update the
+   `Auth/`, `Sync/`, `LocalDb/` placeholder note (`README.md:28`) since `Sync/` is no longer just a
+   placeholder.
+11. Confirm all of Plans 1–6 (M0–M5 equivalent) are merged to `main`, then let Release Please pick up the
    accumulated `feat:`/`fix:` commits and produce its automated version-bump PR per this repo's existing
    `release-please.yml` flow — don't hand-edit version numbers outside of what Release Please's config
    manages, and confirm during this step whether `AppSettings.CurrentApplicationVersion`
@@ -123,8 +155,6 @@ during this plan whether the constant needs manual updating or should be added t
 - No new backend work — the Sync UI's `Api` mode only needs to *configure* `ApiSyncProvider`; there's still
   no real server for it to talk to (Plan 6's graceful-failure handling is what keeps this safe to expose in
   the UI regardless).
-- No export (CSV/JSON) for reports — README mentions "optional export endpoints" (`README.md:202`) as a
-  backend-side feature; this plan's Reports tab is read-only in-app display only.
 - No retroactive splitting of `MainWindowViewModel` into smaller viewmodels beyond what's needed for the
   Reports tab — the three-constructor inconsistency and god-viewmodel pattern noted in `CLAUDE.md` are
   explicitly out of scope for this plan to "fix."
@@ -136,9 +166,11 @@ during this plan whether the constant needs manual updating or should be added t
 - Selecting `SyncMode = File` and pointing two app instances (or two temp data directories) at the same sync
   folder results in each seeing the other's project/task/time-entry changes after a manual sync.
 - Selecting `SyncMode = Api` with no real backend configured fails gracefully with a toast, not a crash.
+- Before `SyncOrchestrator` applies its first remote-wins overwrite/delete in a `RunSyncAsync()` call, a
+  backup is triggered per the configured `PreMergeBackupMode` (WL-51).
 - Reports tab shows real weekly per-project and per-task totals sourced from `LocalDbService`, matching what
-  manual calculation against the same data would produce.
-- Report aggregation logic has passing unit tests.
+  manual calculation against the same data would produce, and can export those summaries to CSV (WL-50).
+- Report aggregation and CSV export logic both have passing unit tests.
 - README's status section accurately reflects the shipped state (no more "Sync engine (placeholder
   directory)" once it's real).
 - A Release Please-driven version bump PR is generated/merged reflecting the accumulated `feat:` commits from
@@ -148,20 +180,30 @@ during this plan whether the constant needs manual updating or should be added t
 
 ```
 feat(sync): add SyncMode setting and wire SyncOrchestrator into app startup and Settings UI
-feat(reports): replace Reports tab stub with weekly per-project/per-task summaries
+feat(sync): trigger a safety backup before applying remote-wins merges
+feat(reports): replace Reports tab stub with weekly per-project/per-task summaries and CSV export
 docs: update README sync/reports status for v1.1.0
 ```
 
 ## Prompt for Claude Code
 
+> Before starting: if WL-67 (consolidating `MainWindowViewModel`'s 5-arg/6-arg constructors into one) hasn't
+> landed yet, do that first — this plan adds another constructor dependency (`SyncOrchestrator`) and it's not
+> worth threading it through the current constructor mess twice.
+>
 > Add a Sync section to the Settings tab in `MainWindow.axaml` mirroring the existing Backup section's style,
-> bound to new `SyncMode`/`SyncFolderPath`/`ApiEndpoint`/`ApiToken`/`LastSyncedAt` properties and a
-> `SyncNowCommand` on `MainWindowViewModel`, and wire `SyncOrchestrator` into `App.axaml.cs`'s startup phases
-> so a real sync (using `FileSyncProvider` or `ApiSyncProvider` per the selected `SyncMode`) actually runs.
+> bound to new `SyncMode`/`SyncFolderPath`/`ApiEndpoint`/`ApiToken`/`LastSyncedAt`/`PreMergeBackupMode`
+> properties and a `SyncNowCommand` on `MainWindowViewModel`, and wire `SyncOrchestrator` into
+> `App.axaml.cs`'s startup phases so a real sync (using `FileSyncProvider` or `ApiSyncProvider` per the
+> selected `SyncMode`) actually runs. Have `SyncOrchestrator` trigger `SettingsService.CreateBackupAsync`
+> before it applies its first remote-wins overwrite/delete in a given `RunSyncAsync()` call, gated by the new
+> `PreMergeBackupMode` setting (Always/Never/OncePerSession).
+>
 > Separately, replace the Reports tab stub (`Views/MainWindow.axaml` around line 490) with a real weekly
 > summary view — total time per project and per task for the current week — using `LocalDbService`'s existing
 > query methods and the same week-boundary calculation already used for the header's weekly total
-> (`MainWindowViewModel.cs` around line 335). Add unit tests for the report aggregation logic. Finally, once
-> this and all prior sync plans are merged, update README's status section to reflect that sync (file-based
-> live, API-based ready-but-unconnected) and reporting are implemented, and confirm the Release Please-driven
-> version bump reflects the accumulated `feat:` commits.
+> (`MainWindowViewModel.cs` around line 335), plus a CSV export action for those summaries. Add unit tests for
+> the report aggregation logic and the CSV export. Finally, once this and all prior sync plans are merged,
+> update README's status section to reflect that sync (file-based live, API-based ready-but-unconnected) and
+> reporting (with export) are implemented, and confirm the Release Please-driven version bump reflects the
+> accumulated `feat:` commits.

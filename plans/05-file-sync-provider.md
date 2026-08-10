@@ -89,6 +89,21 @@ Two existing patterns to mirror closely, both in `Services/SettingsService.cs` a
   `WorkLedger_MVP_Plan.md` actually works.
 - All new provider logic has passing unit tests, including the graceful-failure case.
 
+## Addendum (WL-47, WL-49): SyncId wire format + still-open artifact cleanup
+
+Two things changed/were flagged after this plan was written, from the WL-47/WL-49 gap review:
+
+- **`EntityId` is a `Guid` (the entity's `SyncId`), not the local autoincrement `Id`.** `Sync/RemoteChange.cs`
+  and `Models/SyncQueue.cs` were updated in Plan 4's addendum accordingly — `PushAsync`'s JSON file contents
+  (`{ EntityType, EntityId, Operation, PayloadJson, Version, OriginDeviceId, CreatedAt }`) should serialize
+  `EntityId` as that `Guid`, not a local int, or cross-device merges will silently collide. This is why the
+  "two devices, same folder" end-to-end test in this plan's acceptance criteria matters — it would have masked
+  this exact bug if both devices' first row happened to land on the same local `Id`.
+- **Artifact retention is still unaddressed.** WL-49 (of which WL-60 — `SyncQueue` pruning — was resolved in
+  Plan 4's addendum) also flagged that `<syncFolder>/changes/*.json` accumulates forever with no cleanup. This
+  plan's own "Out of scope" already called that out as a known limitation; it's still open and still this
+  plan's (or a follow-up's) responsibility, not resolved elsewhere.
+
 ## Suggested commit message
 
 ```

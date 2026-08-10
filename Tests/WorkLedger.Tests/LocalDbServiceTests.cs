@@ -122,7 +122,7 @@ namespace WorkLedger.Tests
             var queue = await _service.GetAllAsync<SyncQueue>();
             var entry = Assert.Single(queue);
             Assert.Equal("project", entry.EntityType);
-            Assert.Equal(project.Id, entry.EntityId);
+            Assert.Equal(project.SyncId, entry.EntityId);
             Assert.Equal("create", entry.Operation);
             Assert.False(entry.IsSynced);
             Assert.NotNull(entry.PayloadJson);
@@ -141,7 +141,7 @@ namespace WorkLedger.Tests
             Assert.Equal(2, queue.Count);
             var updateEntry = queue.Single(q => q.Operation == "update");
             Assert.Equal("project", updateEntry.EntityType);
-            Assert.Equal(project.Id, updateEntry.EntityId);
+            Assert.Equal(project.SyncId, updateEntry.EntityId);
         }
 
         [Fact]
@@ -155,7 +155,7 @@ namespace WorkLedger.Tests
             var queue = await _service.GetAllAsync<SyncQueue>();
             var deleteEntry = Assert.Single(queue, q => q.Operation == "delete");
             Assert.Equal("project", deleteEntry.EntityType);
-            Assert.Equal(project.Id, deleteEntry.EntityId);
+            Assert.Equal(project.SyncId, deleteEntry.EntityId);
             Assert.NotNull(deleteEntry.PayloadJson);
         }
 
@@ -169,7 +169,7 @@ namespace WorkLedger.Tests
             var queue = await _service.GetAllAsync<SyncQueue>();
             var entry = Assert.Single(queue);
             Assert.Equal("task", entry.EntityType);
-            Assert.Equal(task.Id, entry.EntityId);
+            Assert.Equal(task.SyncId, entry.EntityId);
             Assert.Equal("create", entry.Operation);
         }
 
@@ -185,7 +185,7 @@ namespace WorkLedger.Tests
             var queue = await _service.GetAllAsync<SyncQueue>();
             var updateEntry = Assert.Single(queue, q => q.Operation == "update");
             Assert.Equal("task", updateEntry.EntityType);
-            Assert.Equal(task.Id, updateEntry.EntityId);
+            Assert.Equal(task.SyncId, updateEntry.EntityId);
         }
 
         [Fact]
@@ -199,7 +199,7 @@ namespace WorkLedger.Tests
             var queue = await _service.GetAllAsync<SyncQueue>();
             var deleteEntry = Assert.Single(queue, q => q.Operation == "delete");
             Assert.Equal("task", deleteEntry.EntityType);
-            Assert.Equal(task.Id, deleteEntry.EntityId);
+            Assert.Equal(task.SyncId, deleteEntry.EntityId);
         }
 
         [Fact]
@@ -212,7 +212,7 @@ namespace WorkLedger.Tests
             var queue = await _service.GetAllAsync<SyncQueue>();
             var queueEntry = Assert.Single(queue);
             Assert.Equal("timeentry", queueEntry.EntityType);
-            Assert.Equal(entry.Id, queueEntry.EntityId);
+            Assert.Equal(entry.SyncId, queueEntry.EntityId);
             Assert.Equal("create", queueEntry.Operation);
         }
 
@@ -228,7 +228,7 @@ namespace WorkLedger.Tests
             var queue = await _service.GetAllAsync<SyncQueue>();
             var updateEntry = Assert.Single(queue, q => q.Operation == "update");
             Assert.Equal("timeentry", updateEntry.EntityType);
-            Assert.Equal(entry.Id, updateEntry.EntityId);
+            Assert.Equal(entry.SyncId, updateEntry.EntityId);
         }
 
         [Fact]
@@ -242,7 +242,7 @@ namespace WorkLedger.Tests
             var queue = await _service.GetAllAsync<SyncQueue>();
             var deleteEntry = Assert.Single(queue, q => q.Operation == "delete");
             Assert.Equal("timeentry", deleteEntry.EntityType);
-            Assert.Equal(entry.Id, deleteEntry.EntityId);
+            Assert.Equal(entry.SyncId, deleteEntry.EntityId);
         }
 
         [Fact]
@@ -267,16 +267,19 @@ namespace WorkLedger.Tests
                 var legacy = Assert.Single(projects);
                 Assert.Equal(1, legacy.Version);
                 Assert.Equal("device-migrated", legacy.OriginDeviceId);
+                Assert.NotEqual(Guid.Empty, legacy.SyncId);
 
                 // Reopening the now-migrated database must not touch already-migrated rows
-                // (e.g. must not bump Version to 2). Re-run against the same open connection
-                // path rather than closing first, since sqlite-net-pcl pools connections by path.
+                // (e.g. must not bump Version to 2, must not regenerate SyncId). Re-run against
+                // the same open connection path rather than closing first, since sqlite-net-pcl
+                // pools connections by path.
                 var reopened = new LocalDbService(migrationDbPath, "device-migrated");
                 await reopened.Initialization;
 
                 var afterReopen = await reopened.GetProjectsAsync();
                 var stillMigrated = Assert.Single(afterReopen);
                 Assert.Equal(1, stillMigrated.Version);
+                Assert.Equal(legacy.SyncId, stillMigrated.SyncId);
 
                 await migrated.Connection.CloseAsync();
                 await reopened.Connection.CloseAsync();
