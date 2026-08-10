@@ -92,6 +92,15 @@ The methods to touch, all in `Services/LocalDbService.cs`:
   purely additive inside `LocalDbService`.
 - Unit tests cover all 6 operation paths and pass.
 
+## Addendum (WL-47/WL-54): SyncQueue.EntityId is the entity's SyncId, not its local Id
+
+Post-merge gap review (WL-47/WL-54) found that keying `SyncQueue.EntityId` off the entity's local autoincrement
+`Id` breaks cross-device merges — two offline devices' unrelated rows can share the same local `Id`, and
+`SyncOrchestrator` (Plan 4) would then treat them as the same entity. `SyncQueue.EntityId` (and
+`Sync.RemoteChange.EntityId`) are now `Guid`, populated from the entity's `SyncId` (added in Plan 2's addendum),
+not its `Id`. `BuildSyncQueueEntry`'s call sites in `LocalDbService` pass `project.SyncId`/`task.SyncId`/
+`entry.SyncId`, never `.Id`.
+
 ## Suggested commit message
 
 ```

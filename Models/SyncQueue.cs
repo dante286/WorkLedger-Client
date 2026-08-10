@@ -12,8 +12,9 @@ namespace WorkLedger_Client.Models
         [Indexed]
         public string? EntityType { get; set; }
 
-        // Local entity ID (e.g., Project.Id)
-        public int EntityId { get; set; }
+        // The affected entity's SyncId (Project/TaskItem/TimeEntry.SyncId) - NOT the local
+        // autoincrement Id, which only has meaning within this device's own database. See WL-47/WL-54.
+        public Guid EntityId { get; set; }
 
         // e.g., "create", "update", "delete"
         public string? Operation { get; set; }

@@ -98,6 +98,15 @@ this plan still needs an explicit backfill step, plus a place to mint and persis
   and confirming the same ID both times).
 - All new behavior has passing unit tests in `Tests/WorkLedger.Tests`.
 
+## Addendum (WL-47): SyncId added alongside Version/OriginDeviceId
+
+Post-merge gap review (WL-47) found that `Version`/`OriginDeviceId` alone aren't enough: `Project`/`TaskItem`/
+`TimeEntry` still only had the local `[PrimaryKey, AutoIncrement] Id` as an identifier, and that counter is
+per-device — two offline devices can independently create a row that lands on the same local `Id`. Plan 4's
+implementation added a `Guid SyncId` (generated once at creation, backfilled for pre-existing rows via a
+per-row `UPDATE ... WHERE SyncId IS NULL`, mirroring this plan's `Version`/`OriginDeviceId` backfill shape) to
+all three models. Sync code (Plans 3/4) keys off `SyncId`, never the local `Id`. See `Models/IVersionedEntity.cs`.
+
 ## Suggested commit message
 
 ```
