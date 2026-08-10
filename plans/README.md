@@ -27,7 +27,8 @@ rather than getting its own file, so there are 7 plans covering the 8 original m
 - **1 and 2 are prerequisites for everything else** — run them first, in order.
 - **3 and 4 can run in parallel** once 2 lands (different files: 3 touches `LocalDbService`, 4 adds a new `Sync/` abstraction + `SyncOrchestrator`).
 - **5 and 6 both depend on 4** but not on each other. **5 (file-based) delivers real user value with zero backend dependency — prioritize it over 6** if time is constrained. 6 can slip until a real backend exists to point at.
-- **7** depends on 4 for the Sync UI half, and on nothing but the current codebase for the Reports UI half (that half could be pulled forward if reporting matters more than sync for the next release). The Release step at the end of 7 depends on everything else being merged.
+- **7** depends on 4 for the Sync UI half, and on nothing but the current codebase for the Reports UI half (that half could be pulled forward if reporting matters more than sync for the next release). The Release step at the end of 7 depends on everything else being merged. Plan 7 now also folds in WL-50 (Reports CSV export) and WL-51 (pre-merge safety backup) — see its addendum.
+- **Recommended before 7: WL-67** (consolidate `MainWindowViewModel`'s 5-arg/6-arg constructors — one subtask of WL-52's constructor/`TaskItemViewModel` cleanup). Plan 7 threads a `SyncOrchestrator` dependency through that same constructor; landing WL-67 first avoids doing that edit twice. Not a hard blocker, just wasted motion if skipped.
 
 ## How to use these
 
