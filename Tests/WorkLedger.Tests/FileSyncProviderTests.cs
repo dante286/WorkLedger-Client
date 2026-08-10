@@ -165,6 +165,61 @@ namespace WorkLedger.Tests
         }
 
         [Fact]
+        public async Task PullAsync_PrunesChangeFiles_OlderThanRetentionWindow()
+        {
+            var changesFolder = Path.Combine(_syncFolder, "changes");
+            Directory.CreateDirectory(changesFolder);
+
+            var oldFilePath = Path.Combine(changesFolder, $"device-a-{DateTime.UtcNow.AddDays(-2):yyyyMMddHHmmssfff}.json");
+            File.WriteAllText(oldFilePath, "[]");
+
+            var freshFilePath = Path.Combine(changesFolder, $"device-a-{DateTime.UtcNow:yyyyMMddHHmmssfff}.json");
+            File.WriteAllText(freshFilePath, "[]");
+
+            var provider = new FileSyncProvider(_syncFolder, "device-a", TimeSpan.FromDays(1));
+
+            await provider.PullAsync(DateTime.MinValue);
+
+            Assert.False(File.Exists(oldFilePath));
+            Assert.True(File.Exists(freshFilePath));
+        }
+
+        [Fact]
+        public async Task PullAsync_ReturnsAnAgedOutChange_BeforePruningItAway()
+        {
+            var changesFolder = Path.Combine(_syncFolder, "changes");
+            Directory.CreateDirectory(changesFolder);
+
+            var entityId = Guid.NewGuid();
+            var oldTimestamp = DateTime.UtcNow.AddDays(-2);
+            var oldFilePath = Path.Combine(changesFolder, $"device-b-{oldTimestamp:yyyyMMddHHmmssfff}.json");
+            var payload = JsonSerializer.Serialize(new[]
+            {
+                new
+                {
+                    EntityType = "project",
+                    EntityId = entityId,
+                    Operation = "create",
+                    PayloadJson = (string?)null,
+                    Version = 1,
+                    OriginDeviceId = "device-b",
+                    CreatedAt = oldTimestamp
+                }
+            });
+            File.WriteAllText(oldFilePath, payload);
+
+            var provider = new FileSyncProvider(_syncFolder, "device-a", TimeSpan.FromDays(1));
+
+            var pulled = (await provider.PullAsync(DateTime.MinValue)).ToList();
+
+            // A device that hasn't synced in a while still gets one last look at a change
+            // during the very call that discovers it, before its file ages out.
+            var change = Assert.Single(pulled);
+            Assert.Equal(entityId, change.EntityId);
+            Assert.False(File.Exists(oldFilePath));
+        }
+
+        [Fact]
         public async Task TwoDevices_CanPushAndPullEachOthersChanges_ThroughSharedFolder()
         {
             var dbPathA = Path.Combine(Path.GetTempPath(), $"WorkLedgerFileSyncA_{Guid.NewGuid()}.db");

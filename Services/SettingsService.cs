@@ -18,6 +18,13 @@ namespace WorkLedger_Client.Services
         public bool BackupOnClose { get; set; } = false;
         public string DeviceId { get; set; } = string.Empty;
         public string SyncFolderPath { get; set; } = string.Empty;
+
+        // WL-61: how long FileSyncProvider keeps processed change files in the sync folder
+        // before pruning them. Value == days, mirroring BackupInterval's "value == minutes"
+        // convention. Unlike the string settings above, an int naturally survives a missing
+        // key in older settings.json (System.Text.Json leaves this initializer's value
+        // untouched), so no explicit LoadSettings backfill is needed.
+        public int SyncRetentionDays { get; set; } = 30;
     }
 
     public enum BackupInterval

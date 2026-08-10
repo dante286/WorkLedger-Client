@@ -184,6 +184,29 @@ namespace WorkLedger.Tests
         }
 
         [Fact]
+        public void LoadSettings_OnFreshInstall_DefaultsSyncRetentionDaysTo30()
+        {
+            var service = new SettingsService(_tempDataDirectory);
+
+            var settings = service.LoadSettings();
+
+            Assert.Equal(30, settings.SyncRetentionDays);
+        }
+
+        [Fact]
+        public void SaveAndLoadSettings_RoundTripsSyncRetentionDays()
+        {
+            var service = new SettingsService(_tempDataDirectory);
+            var settings = service.LoadSettings();
+            settings.SyncRetentionDays = 7;
+            service.SaveSettings(settings);
+
+            var reloaded = service.LoadSettings();
+
+            Assert.Equal(7, reloaded.SyncRetentionDays);
+        }
+
+        [Fact]
         public void ValidateSyncFolder_ReturnsFalse_WhenPathIsBlockedByAFile()
         {
             Directory.CreateDirectory(_tempDataDirectory);

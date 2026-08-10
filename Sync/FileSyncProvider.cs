@@ -14,12 +14,14 @@ namespace WorkLedger_Client.Sync
     public class FileSyncProvider : ISyncProvider
     {
         // "yyyyMMddHHmmssfff" - fixed width, digits only, which is what lets
-        // TryParseOriginDeviceId split a filename from the right below.
+        // TryParseFileName split a filename from the right below.
         private const int TimestampLength = 17;
         private const string ChangesSubfolder = "changes";
+        private static readonly TimeSpan DefaultRetentionWindow = TimeSpan.FromDays(30);
 
         private readonly string _syncFolderPath;
         private readonly string _deviceId;
+        private readonly TimeSpan _retentionWindow;
 
         // Tracked by filename rather than the embedded timestamp: two devices' clocks can
         // drift, and a filename this instance has already returned once never needs
@@ -28,10 +30,14 @@ namespace WorkLedger_Client.Sync
         // instance's empty set intentionally causes it to catch up on all remote history.
         private readonly HashSet<string> _processedFileNames = new(StringComparer.OrdinalIgnoreCase);
 
-        public FileSyncProvider(string syncFolderPath, string deviceId)
+        // WL-49/WL-61: <syncFolder>/changes/*.json otherwise accumulates forever. retentionWindow
+        // is a caller-supplied config value (see AppSettings.SyncRetentionDays), not something
+        // this type reaches into SettingsService for - matching how deviceId is passed in below.
+        public FileSyncProvider(string syncFolderPath, string deviceId, TimeSpan? retentionWindow = null)
         {
             _syncFolderPath = syncFolderPath;
             _deviceId = deviceId;
+            _retentionWindow = retentionWindow ?? DefaultRetentionWindow;
         }
 
         private string ChangesFolder => Path.Combine(_syncFolderPath, ChangesSubfolder);
@@ -85,7 +91,7 @@ namespace WorkLedger_Client.Sync
                 foreach (var filePath in Directory.GetFiles(ChangesFolder, "*.json").OrderBy(f => f))
                 {
                     var fileName = Path.GetFileName(filePath);
-                    if (!TryParseOriginDeviceId(fileName, out var originDeviceId))
+                    if (!TryParseFileName(fileName, out var originDeviceId, out _))
                         continue;
 
                     // A device never needs to pull its own pushes back.
@@ -101,6 +107,11 @@ namespace WorkLedger_Client.Sync
 
                     results.AddRange(entries.Select(ToRemoteChange));
                 }
+
+                // Runs after every file has had its chance to be returned at least once this
+                // call, so a device that hasn't synced in a while still sees a change before
+                // its file ages out - pruning only removes files no longer new to anyone here.
+                PruneOldChangeFiles();
 
                 return Task.FromResult<IEnumerable<RemoteChange>>(results);
             }
@@ -174,9 +185,10 @@ namespace WorkLedger_Client.Sync
         // Expected shape: "<deviceId>-<yyyyMMddHHmmssfff>.json". DeviceId is itself a Guid
         // string full of hyphens, so this splits from the right using the timestamp's
         // fixed, digits-only width rather than splitting on the first '-'.
-        private static bool TryParseOriginDeviceId(string fileName, out string deviceId)
+        private static bool TryParseFileName(string fileName, out string deviceId, out DateTime timestampUtc)
         {
             deviceId = string.Empty;
+            timestampUtc = default;
             var nameNoExt = Path.GetFileNameWithoutExtension(fileName);
 
             if (nameNoExt.Length <= TimestampLength + 1)
@@ -187,11 +199,47 @@ namespace WorkLedger_Client.Sync
                 return false;
 
             var timestampPart = nameNoExt.Substring(separatorIndex + 1);
-            if (!timestampPart.All(char.IsDigit))
+            if (!DateTime.TryParseExact(
+                    timestampPart, "yyyyMMddHHmmssfff",
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None,
+                    out var parsed))
                 return false;
 
             deviceId = nameNoExt.Substring(0, separatorIndex);
+            timestampUtc = DateTime.SpecifyKind(parsed, DateTimeKind.Utc);
             return true;
+        }
+
+        // WL-49/WL-61: deletes change files (from any device, including this one's own
+        // pushes) older than _retentionWindow. Age comes from the filename's embedded
+        // timestamp rather than the file's OS last-write time, since a cloud-sync client
+        // re-touching a file on download shouldn't reset its retention clock.
+        private void PruneOldChangeFiles()
+        {
+            // Never let a pruning failure clobber the results a caller already pulled -
+            // this is best-effort housekeeping, not the pull itself.
+            try
+            {
+                var cutoffUtc = DateTime.UtcNow - _retentionWindow;
+
+                foreach (var filePath in Directory.GetFiles(ChangesFolder, "*.json"))
+                {
+                    var fileName = Path.GetFileName(filePath);
+                    if (!TryParseFileName(fileName, out _, out var timestampUtc))
+                        continue;
+
+                    if (timestampUtc >= cutoffUtc)
+                        continue;
+
+                    File.Delete(filePath);
+                    _processedFileNames.Remove(fileName);
+                }
+            }
+            catch (Exception ex) when (IsRecoverableIoFailure(ex))
+            {
+                System.Diagnostics.Debug.WriteLine($"FileSyncProvider: prune pass failed: {ex.Message}");
+            }
         }
 
         // Mirrors SettingsService.TryCopyFileWithRetriesAsync's retry shape for transient
