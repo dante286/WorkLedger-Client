@@ -251,5 +251,71 @@ namespace WorkLedger.Tests
                 TryDeleteWithRetries(dbPathB);
             }
         }
+
+        // WL-93: the regression the ticket describes, driven end to end off device B's real
+        // SyncQueue rows rather than hand-built RemoteChanges - the bug lived in what
+        // LocalDbService queued, so a test that hand-writes the version would have passed
+        // against the broken code.
+        [Fact]
+        public async Task RunSyncAsync_DeleteFromAnInSyncPeer_RemovesTheLocalRow()
+        {
+            var dbPathB = Path.Combine(Path.GetTempPath(), $"WorkLedgerSyncTests_{Guid.NewGuid()}.db");
+            var dbB = new LocalDbService(dbPathB, RemoteDeviceId);
+            await dbB.Initialization;
+            try
+            {
+                // B creates a project and A pulls it, leaving both devices in sync at Version 1.
+                var projectB = new Project { Name = "Shared" };
+                await dbB.SaveProjectAsync(projectB);
+                _provider.RemoteChanges.AddRange(await ToRemoteChangesAsync(dbB));
+                await _orchestrator.RunSyncAsync();
+
+                var onA = Assert.Single(await _db.GetProjectsAsync());
+                Assert.Equal(projectB.SyncId, onA.SyncId);
+                Assert.Equal(projectB.Version, onA.Version);
+
+                // B deletes it. Before WL-93 the queued tombstone carried Version 1 - the same
+                // version A already holds - so RemoteWins' strict > dropped it on arrival.
+                await dbB.Connection.DeleteAllAsync<SyncQueue>();
+                await dbB.DeleteProjectAsync(projectB);
+
+                _provider.RemoteChanges.Clear();
+                _provider.RemoteChanges.AddRange(await ToRemoteChangesAsync(dbB));
+                await _orchestrator.RunSyncAsync();
+
+                Assert.Empty(await _db.GetProjectsAsync());
+            }
+            finally
+            {
+                await dbB.Connection.CloseAsync();
+                TryDeleteWithRetries(dbPathB);
+            }
+        }
+
+        // Mirrors FileSyncProvider.ToWireEntry: SyncQueue carries no Version/OriginDeviceId
+        // of its own, so both are lifted out of the serialized payload.
+        private static async Task<List<RemoteChange>> ToRemoteChangesAsync(LocalDbService db)
+        {
+            var queued = await db.GetAllAsync<SyncQueue>();
+            return queued.Select(entry =>
+            {
+                var probe = JsonSerializer.Deserialize<VersionProbe>(entry.PayloadJson!);
+                return new RemoteChange
+                {
+                    EntityType = entry.EntityType ?? string.Empty,
+                    EntityId = entry.EntityId,
+                    Operation = entry.Operation ?? string.Empty,
+                    PayloadJson = entry.PayloadJson,
+                    Version = probe?.Version ?? 0,
+                    OriginDeviceId = probe?.OriginDeviceId
+                };
+            }).ToList();
+        }
+
+        private class VersionProbe
+        {
+            public int Version { get; set; }
+            public string? OriginDeviceId { get; set; }
+        }
     }
 }

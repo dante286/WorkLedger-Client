@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using SQLite;
@@ -157,6 +158,55 @@ namespace WorkLedger.Tests
             Assert.Equal("project", deleteEntry.EntityType);
             Assert.Equal(project.SyncId, deleteEntry.EntityId);
             Assert.NotNull(deleteEntry.PayloadJson);
+        }
+
+        // WL-93: the tombstone has to out-version the copy every peer already holds, or
+        // RemoteWins' strict > drops it and the row comes back. Asserted on the queued
+        // payload rather than the in-memory entity, since the payload is what ships.
+        [Theory]
+        [InlineData("project")]
+        [InlineData("task")]
+        [InlineData("timeentry")]
+        public async Task DeleteAsync_QueuesTombstoneAtABumpedVersion(string entityType)
+        {
+            int versionBeforeDelete;
+            switch (entityType)
+            {
+                case "project":
+                    var project = new Project { Name = "To Delete" };
+                    await _service.SaveProjectAsync(project);
+                    versionBeforeDelete = project.Version;
+                    await _service.DeleteProjectAsync(project);
+                    break;
+                case "task":
+                    var task = new TaskItem { Name = "To Delete", ProjectId = 1 };
+                    await _service.SaveTaskAsync(task);
+                    versionBeforeDelete = task.Version;
+                    await _service.DeleteTaskAsync(task);
+                    break;
+                default:
+                    var timeEntry = new TimeEntry { TaskItemId = 1, StartTime = DateTime.UtcNow };
+                    await _service.SaveTimeEntryAsync(timeEntry);
+                    versionBeforeDelete = timeEntry.Version;
+                    await _service.DeleteTimeEntryAsync(timeEntry);
+                    break;
+            }
+
+            var queue = await _service.GetAllAsync<SyncQueue>();
+            var deleteEntry = Assert.Single(queue, q => q.Operation == "delete");
+            Assert.Equal(entityType, deleteEntry.EntityType);
+
+            var payload = JsonSerializer.Deserialize<VersionProbe>(deleteEntry.PayloadJson!);
+            Assert.NotNull(payload);
+            Assert.Equal(versionBeforeDelete + 1, payload!.Version);
+            Assert.Equal(TestDeviceId, payload.OriginDeviceId);
+        }
+
+        // Reads only the two fields every entity type shares, so one assertion covers all three.
+        private class VersionProbe
+        {
+            public int Version { get; set; }
+            public string? OriginDeviceId { get; set; }
         }
 
         [Fact]

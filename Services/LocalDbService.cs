@@ -126,6 +126,14 @@ namespace WorkLedger_Client.Services
             entity.OriginDeviceId = DeviceId;
         }
 
+        // WL-93: a delete has to bump the version for the same reason an update does.
+        // The queued tombstone carries this entity as its payload, and every receiver
+        // (SyncOrchestrator.RemoteWins, and the server's own last-write-wins) compares
+        // with a strict >. Queued at the entity's current Version, an in-sync peer holds
+        // the identical version, loses the comparison, and silently drops the delete -
+        // so the row reappears on the next edit that re-syncs it.
+        private void StampForDelete(IVersionedEntity entity) => StampForUpdate(entity);
+
         // Builds the SyncQueue row queued alongside every entity mutation. Payload is the
         // entity itself (post-stamping) so Plan 4's orchestrator has Id/Version/OriginDeviceId
         // to reconcile against, including for deletes (a null payload can't distinguish
@@ -196,6 +204,8 @@ namespace WorkLedger_Client.Services
 
         public async Task<int> DeleteProjectAsync(Project project)
         {
+            StampForDelete(project);
+
             var rowsAffected = 0;
             await _db.RunInTransactionAsync(conn =>
             {
@@ -235,6 +245,8 @@ namespace WorkLedger_Client.Services
 
         public async Task<int> DeleteTaskAsync(TaskItem task)
         {
+            StampForDelete(task);
+
             var rowsAffected = 0;
             await _db.RunInTransactionAsync(conn =>
             {
@@ -273,6 +285,8 @@ namespace WorkLedger_Client.Services
 
         public async Task<int> DeleteTimeEntryAsync(TimeEntry entry)
         {
+            StampForDelete(entry);
+
             var rowsAffected = 0;
             await _db.RunInTransactionAsync(conn =>
             {
