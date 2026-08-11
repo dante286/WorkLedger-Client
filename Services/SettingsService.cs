@@ -17,6 +17,14 @@ namespace WorkLedger_Client.Services
         public BackupInterval BackupInterval { get; set; } = BackupInterval.Disabled;
         public bool BackupOnClose { get; set; } = false;
         public string DeviceId { get; set; } = string.Empty;
+        public string SyncFolderPath { get; set; } = string.Empty;
+
+        // WL-61: how long FileSyncProvider keeps processed change files in the sync folder
+        // before pruning them. Value == days, mirroring BackupInterval's "value == minutes"
+        // convention. Unlike the string settings above, an int naturally survives a missing
+        // key in older settings.json (System.Text.Json leaves this initializer's value
+        // untouched), so no explicit LoadSettings backfill is needed.
+        public int SyncRetentionDays { get; set; } = 30;
     }
 
     public enum BackupInterval
@@ -152,6 +160,13 @@ namespace WorkLedger_Client.Services
                     SaveSettings(settings);
                 }
 
+                // Backfill sync folder path if missing (for older settings files)
+                if (string.IsNullOrWhiteSpace(settings.SyncFolderPath))
+                {
+                    settings.SyncFolderPath = string.Empty;
+                    SaveSettings(settings);
+                }
+
                 return settings;
             }
             catch (Exception)
@@ -241,6 +256,31 @@ namespace WorkLedger_Client.Services
                 var settingsPath = Path.Combine(sourceDirectory, SettingsFileName);
                 var dbPath = Path.Combine(sourceDirectory, DefaultDbFileName);
                 return File.Exists(settingsPath) && File.Exists(dbPath);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Validates that a folder is usable as a sync folder: unlike ValidateBackupSource,
+        /// this doesn't need pre-existing content - it confirms the folder exists (or can be
+        /// created) and is actually writable before FileSyncProvider is trusted to use it.
+        /// </summary>
+        public bool ValidateSyncFolder(string syncFolderPath)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(syncFolderPath)) return false;
+
+                if (!Directory.Exists(syncFolderPath))
+                    Directory.CreateDirectory(syncFolderPath);
+
+                var probePath = Path.Combine(syncFolderPath, $".workledger-sync-probe-{Guid.NewGuid():N}.tmp");
+                File.WriteAllText(probePath, string.Empty);
+                File.Delete(probePath);
+                return true;
             }
             catch
             {

@@ -132,5 +132,90 @@ namespace WorkLedger.Tests
 
             Assert.Equal(first.DeviceId, second.DeviceId);
         }
+
+        [Fact]
+        public void LoadSettings_BackfillsMissingSyncFolderPath_ForOlderSettingsFiles()
+        {
+            Directory.CreateDirectory(_tempDataDirectory);
+            var settingsPath = Path.Combine(_tempDataDirectory, SettingsService.SettingsFileName);
+            File.WriteAllText(settingsPath, """
+                {
+                    "Theme": "System",
+                    "DataDirectory": "",
+                    "ApplicationVersion": "1.0.0",
+                    "BackupDirectory": "",
+                    "BackupInterval": "Disabled",
+                    "BackupOnClose": false
+                }
+                """);
+
+            var service = new SettingsService(_tempDataDirectory);
+
+            var settings = service.LoadSettings();
+
+            Assert.Equal(string.Empty, settings.SyncFolderPath);
+        }
+
+        [Fact]
+        public void ValidateSyncFolder_ReturnsTrue_WhenFolderExistsAndIsWritable()
+        {
+            Directory.CreateDirectory(_tempDataDirectory);
+            var service = new SettingsService(_tempDataDirectory);
+
+            Assert.True(service.ValidateSyncFolder(_tempDataDirectory));
+        }
+
+        [Fact]
+        public void ValidateSyncFolder_CreatesFolder_WhenItDoesNotExistYet()
+        {
+            var service = new SettingsService(_tempDataDirectory);
+            var syncFolder = Path.Combine(_tempDataDirectory, "sync-folder-not-created-yet");
+
+            Assert.True(service.ValidateSyncFolder(syncFolder));
+            Assert.True(Directory.Exists(syncFolder));
+        }
+
+        [Fact]
+        public void ValidateSyncFolder_ReturnsFalse_WhenPathIsBlank()
+        {
+            var service = new SettingsService(_tempDataDirectory);
+
+            Assert.False(service.ValidateSyncFolder(string.Empty));
+        }
+
+        [Fact]
+        public void LoadSettings_OnFreshInstall_DefaultsSyncRetentionDaysTo30()
+        {
+            var service = new SettingsService(_tempDataDirectory);
+
+            var settings = service.LoadSettings();
+
+            Assert.Equal(30, settings.SyncRetentionDays);
+        }
+
+        [Fact]
+        public void SaveAndLoadSettings_RoundTripsSyncRetentionDays()
+        {
+            var service = new SettingsService(_tempDataDirectory);
+            var settings = service.LoadSettings();
+            settings.SyncRetentionDays = 7;
+            service.SaveSettings(settings);
+
+            var reloaded = service.LoadSettings();
+
+            Assert.Equal(7, reloaded.SyncRetentionDays);
+        }
+
+        [Fact]
+        public void ValidateSyncFolder_ReturnsFalse_WhenPathIsBlockedByAFile()
+        {
+            Directory.CreateDirectory(_tempDataDirectory);
+            var blockedPath = Path.Combine(_tempDataDirectory, "blocked-by-file");
+            File.WriteAllText(blockedPath, "not a folder");
+
+            var service = new SettingsService(_tempDataDirectory);
+
+            Assert.False(service.ValidateSyncFolder(Path.Combine(blockedPath, "changes")));
+        }
     }
 }
