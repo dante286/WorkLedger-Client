@@ -64,7 +64,7 @@ namespace WorkLedger_Client.Services
         /// <summary>
         /// Gets the default data directory based on platform conventions.
         /// </summary>
-        private static string GetDefaultDataDirectory()
+        public static string GetDefaultDataDirectory()
         {
             string appData;
 

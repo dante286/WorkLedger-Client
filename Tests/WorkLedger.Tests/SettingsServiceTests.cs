@@ -217,5 +217,48 @@ namespace WorkLedger.Tests
 
             Assert.False(service.ValidateSyncFolder(Path.Combine(blockedPath, "changes")));
         }
+
+        [Fact]
+        public void MigrateDataIfNeeded_CopiesDataBackToAPreviouslyUsedDirectory()
+        {
+            // Regression test for WL-74: migrating data was one-directional (old -> new only
+            // ever meant "OS default -> custom"). Moving back to a directory that already has a
+            // stale leftover copy from an earlier move must still pull across the real, current data.
+            var dirA = _tempDataDirectory;
+            var dirB = Path.Combine(Path.GetTempPath(), "WorkLedgerTests_" + Guid.NewGuid());
+
+            try
+            {
+                Directory.CreateDirectory(dirA);
+                File.WriteAllText(Path.Combine(dirA, SettingsService.SettingsFileName), "original-settings");
+                File.WriteAllText(Path.Combine(dirA, SettingsService.DefaultDbFileName), "original-db");
+
+                var service = new SettingsService(dirA);
+
+                // Move dirA -> dirB (e.g. default -> custom). dirA's files are left behind, stale.
+                Assert.True(service.MigrateDataIfNeeded(dirB, dirA));
+
+                // Simulate the app being used at dirB afterwards, so its database evolves.
+                File.WriteAllText(Path.Combine(dirB, SettingsService.DefaultDbFileName), "updated-db-after-use");
+
+                // Move back dirB -> dirA, even though dirA still holds the stale pre-move copy.
+                Assert.True(service.MigrateDataIfNeeded(dirA, dirB));
+
+                Assert.Equal("updated-db-after-use", File.ReadAllText(Path.Combine(dirA, SettingsService.DefaultDbFileName)));
+            }
+            finally
+            {
+                if (Directory.Exists(dirB))
+                    Directory.Delete(dirB, recursive: true);
+            }
+        }
+
+        [Fact]
+        public void GetDefaultDataDirectory_ReturnsAWorkLedgerPath()
+        {
+            var dir = SettingsService.GetDefaultDataDirectory();
+
+            Assert.EndsWith("WorkLedger", dir);
+        }
     }
 }

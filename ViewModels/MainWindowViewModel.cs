@@ -650,43 +650,54 @@ namespace WorkLedger_Client.ViewModels
                     File.WriteAllText(testFile, "test");
                     File.Delete(testFile);
 
-                    // Check if the directory already contains WorkLedger data files
-                    var settingsFile = Path.Combine(path, "settings.json");
-                    var dbFile = Path.Combine(path, "workledger.db");
-
-                    if (File.Exists(settingsFile) || File.Exists(dbFile))
+                    if (_settingsService == null)
                     {
-                        var existingFiles = new List<string>();
-                        if (File.Exists(settingsFile)) existingFiles.Add("settings.json");
-                        if (File.Exists(dbFile)) existingFiles.Add("workledger.db");
-
-                        var fileList = string.Join(", ", existingFiles);
-                        _toastService?.ShowToast(
-                            $"Cannot use this directory: it already contains WorkLedger data ({fileList}). " +
-                            $"Please select an empty directory or the location of existing WorkLedger data to migrate.",
-                            4000);
-                        System.Diagnostics.Debug.WriteLine($"Directory already contains WorkLedger files: {fileList}");
+                        _toastService?.ShowToast("Settings service unavailable; cannot change data directory", 3000);
                         return;
                     }
 
-                    DataDirectory = path;
+                    var currentDataDirectory = _settingsService.DataDirectory;
 
-                    // Save the new directory to settings immediately
-                    if (_settingsService != null)
+                    if (path.Equals(currentDataDirectory, StringComparison.OrdinalIgnoreCase))
                     {
-                        var settings = new WorkLedger_Client.Services.AppSettings
-                        {
-                            Theme = SelectedTheme,
-                            DataDirectory = path,
-                            BackupDirectory = BackupDirectory,
-                            BackupInterval = BackupInterval,
-                            SyncFolderPath = SyncFolderPath,
-                            ApplicationVersion = ApplicationVersion
-                        };
-                        _settingsService.SaveSettings(settings);
+                        _toastService?.ShowToast("This is already the current data directory", 2000);
+                        return;
                     }
 
-                    _toastService?.ShowToast("Data directory set. Restart the app to finish migrating data.", 3000);
+                    // Copy the live settings + database into the newly selected directory right now,
+                    // instead of deferring to App.axaml.cs's next-launch heuristic, which only ever
+                    // handled the default -> custom direction and left custom -> default (and
+                    // custom -> custom) moves with nothing to copy the real data back (WL-74).
+                    // Any pre-existing file at the destination (e.g. a stale copy left behind by an
+                    // earlier move) is backed up rather than silently discarded.
+                    _settingsService.MigrateDataIfNeeded(path, currentDataDirectory);
+
+                    DataDirectory = path;
+
+                    var settings = new WorkLedger_Client.Services.AppSettings
+                    {
+                        Theme = SelectedTheme,
+                        DataDirectory = path,
+                        BackupDirectory = BackupDirectory,
+                        BackupInterval = BackupInterval,
+                        BackupOnClose = BackupOnClose,
+                        SyncFolderPath = SyncFolderPath,
+                        ApplicationVersion = ApplicationVersion
+                    };
+
+                    // Persist the settings at their new home...
+                    new SettingsService(path).SaveSettings(settings);
+
+                    // ...and refresh the pointer settings.json at the OS default location, since
+                    // DiscoverDataDirectory() always bootstraps by reading settings.json there to
+                    // find wherever the real data currently lives.
+                    var defaultDir = SettingsService.GetDefaultDataDirectory();
+                    if (!defaultDir.Equals(path, StringComparison.OrdinalIgnoreCase))
+                    {
+                        new SettingsService(defaultDir).SaveSettings(settings);
+                    }
+
+                    _toastService?.ShowToast("Data directory changed. Restart the app to finish switching over.", 3000);
                 }
                 catch (UnauthorizedAccessException)
                 {

@@ -38,23 +38,13 @@ namespace WorkLedger_Client
                 var appSettings = settingsService.LoadSettings();
                 System.Diagnostics.Debug.WriteLine($"Loaded settings from: {settingsService.SettingsPath}");
 
-                // PHASE 3: HANDLE LEGACY MIGRATIONS
-                // Attempt to migrate data from old default location if needed
-                var defaultDir = GetDefaultDataDirectory();
-                if (!dataDirectory.Equals(defaultDir, StringComparison.OrdinalIgnoreCase))
-                {
-                    // User has custom directory configured - check if there's legacy data in old default location
-                    var oldDefaultDir = defaultDir;
-                    if (Directory.Exists(oldDefaultDir) && !Directory.Equals(new DirectoryInfo(oldDefaultDir), new DirectoryInfo(dataDirectory)))
-                    {
-                        if (settingsService.MigrateDataIfNeeded(dataDirectory, oldDefaultDir))
-                        {
-                            System.Diagnostics.Debug.WriteLine("Legacy data migration from old default completed");
-                        }
-                    }
-                }
-
-                // Database path is now in the discovered data directory
+                // PHASE 3: Database path is now in the discovered data directory.
+                // Data-directory changes copy settings.json + workledger.db into the newly
+                // selected directory immediately (see MainWindowViewModel.BrowseDataDirectoryAsync),
+                // so there's no migration left to do here on startup. This used to run a
+                // "default -> custom" copy on every single launch whenever a custom directory was
+                // configured, which silently overwrote the active database with the stale snapshot
+                // left behind in the default location at the time of the original move (WL-74).
                 string dbPath = settingsService.DatabasePath;
                 System.Diagnostics.Debug.WriteLine($"Database path: {dbPath}");
 
