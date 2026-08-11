@@ -59,6 +59,16 @@ If any of them changes, it changes in **both** repos in the same breath.
 - **Push results are positional.** `SyncPushResponse.Results` has exactly one `SyncItemResult` per input
   change, in request order. `SyncItemResult.EntityId` is **not** a usable key — one batch can hold several
   queue rows for the same entity (create → update → delete). See **WL-94**.
+- **`Accepted = false` is final — retire the queue row, don't retry it.** The server rejects for two reasons:
+  a validation failure (bad payload, `Guid.Empty` parent, unknown entity type) or *its* version won. Neither
+  changes on a re-push, and today's `SyncOrchestrator` leaves anything missing from `AcceptedSyncQueueIds`
+  pending, so a naive mapping re-pushes those rows on every sync **forever**. Adopt
+  `AuthoritativePayloadJson` when present *and* drop the queue row. See **WL-94**.
+- **A same-version change from this device is accepted, not a conflict.** When the server's row was authored
+  by this same `OriginDeviceId` at an equal or higher version, the change is already reflected — a replay, a
+  self-echo, or an ack we never received — and the server answers `Accepted = true` without writing. So a
+  `SyncResult` can legitimately accept a change the server did not apply; do not treat "accepted" as "the
+  server's row now equals what I sent."
 - **The pull cursor is server time.** `SyncPullResponse.ServerTime` is what the next `since` must be, not our
   own `UtcNow`. See **WL-92** for the orchestrator-side change that makes that possible; until it lands this
   provider should still surface `ServerTime` so the plumbing is ready.
