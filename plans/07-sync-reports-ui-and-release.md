@@ -10,9 +10,19 @@ else in this document has landed.
 
 By the time this plan starts, Plans 4–6 have produced: `SyncOrchestrator` (Plan 4, not yet wired into
 `App.axaml.cs` startup or exposed as a command), `FileSyncProvider` with `SyncFolderPath` +
-`PickSyncFolderCommand` (Plan 5), and `ApiSyncProvider` with `ApiEndpoint`/`ApiToken` settings (Plan 6). None
-of that is reachable from the UI yet. This plan adds the missing `SyncMode` switch and wires the whole stack
-together — this is where `SyncOrchestrator` actually gets instantiated and driven for the first time.
+`PickSyncFolderCommand` (Plan 5), and `ApiSyncProvider` with `ApiEndpoint`/`ApiToken`/`ApiTokenExpiresAtUtc`
+settings and device bootstrap (Plan 6). None of that is reachable from the UI yet. This plan adds the missing
+`SyncMode` switch and wires the whole stack together — this is where `SyncOrchestrator` actually gets
+instantiated and driven for the first time.
+
+> **Note (2026-08-11):** `SyncOrchestrator` is still constructed *only* in tests — not in `App.axaml.cs`, not
+> in `MainWindowViewModel`. So Plan 5's `FileSyncProvider` is merged but has no runtime entry point: nothing
+> calls `RunSyncAsync`/`ConfigureSyncInterval` outside the test suite. Item 4 below is what makes sync real
+> for users, and it is arguably the highest-value item in this plan.
+>
+> Plan 6 has also been rewritten against the **real** `WorkLedger-API` backend (C#/ASP.NET Core, not the
+> FastAPI service the old README described). `Api` mode now means a JWT issued by
+> `POST /auth/register-device`, not a hand-entered static token — see the settings-field changes in item 5.
 
 **Recommended prerequisite (WL-52/WL-67):** this plan adds yet another constructor dependency to
 `MainWindowViewModel` (a held `SyncOrchestrator`, needed by `SyncNowCommand`) on top of the existing
@@ -77,6 +87,11 @@ during this plan whether the constant needs manual updating or should be added t
    `MainWindowViewModel`).
 2. **`LastSyncedAt`** — a persisted timestamp (`AppSettings.LastSyncedAt`, nullable `DateTime`), updated after
    each successful `SyncOrchestrator.RunSyncAsync()` call, displayed read-only in the UI.
+   **This is also the pull cursor (WL-92)**, which today is an in-memory field that resets to
+   `DateTime.MinValue` every launch (`Services/SyncOrchestrator.cs:38`). For `Api` mode it must be the
+   **server's** `SyncPullResponse.ServerTime`, not local `UtcNow` — the server hands it back precisely so the
+   cursor is immune to client clock skew. If WL-92 lands first this item is just the display half; if not,
+   fold the persistence into it here rather than storing two different "last synced" values.
 3. **`SyncNowCommand`** on `MainWindowViewModel`: constructs (or reuses a held) `SyncOrchestrator` with the
    provider matching the current `SyncMode` (`NullSyncProvider` for `Off`, `FileSyncProvider` for `File` using
    `SyncFolderPath`, `ApiSyncProvider` for `Api` using `ApiEndpoint`/`ApiToken`), runs it, updates
@@ -93,9 +108,15 @@ during this plan whether the constant needs manual updating or should be added t
    Backup section (after line ~560), with:
    - Mode `ComboBox` bound to `SyncMode`/`SyncModeOptions`.
    - Conditionally-relevant fields: folder picker (`SyncFolderPath` + `PickSyncFolderCommand`, cloned from
-     the Backup Folder row at `Views/MainWindow.axaml:536-545`) when mode is `File`; endpoint/token `TextBox`es
-     when mode is `Api`. Use Avalonia's binding-driven visibility (e.g. a converter or `IsVisible` bound to a
-     computed property comparing `SyncMode`) rather than hiding/showing via code-behind.
+     the Backup Folder row at `Views/MainWindow.axaml:536-545`) when mode is `File`. Use Avalonia's
+     binding-driven visibility (e.g. a converter or `IsVisible` bound to a computed property comparing
+     `SyncMode`) rather than hiding/showing via code-behind.
+   - When mode is `Api`: an `ApiEndpoint` `TextBox`, a **bootstrap secret** `TextBox` (operator-supplied,
+     entered once — it is the gate on `POST /auth/register-device`; prefer not persisting it), and a
+     **Register this device** button that calls Plan 6's bootstrap and stores the returned JWT. The token
+     itself is **issued, not typed** — show it read-only (or just show "registered as `{DeviceId}`" plus the
+     expiry from `ApiTokenExpiresAtUtc`) rather than offering an editable `ApiToken` field. `AppSettings.DeviceId`
+     (`Services/SettingsService.cs:19`) is the identity being registered; display it, don't let it be edited.
    - Read-only `LastSyncedAt` display.
    - A `Sync Now` button bound to `SyncNowCommand`, styled like the existing `Save`/`Browse` buttons.
 6. **Pre-merge safety backup (WL-51: WL-64 + WL-65).** `SyncOrchestrator`'s last-write-wins merge applies a
@@ -140,9 +161,12 @@ during this plan whether the constant needs manual updating or should be added t
 ### Release
 10. Update `README.md`'s status section (`README.md:15-19`, the "🚧 In Progress" list currently naming "Sync
    engine (placeholder directory)") to reflect what actually landed: file-based sync live, API-based sync
-   implemented-but-unconnected (no real backend yet), Reports tab implemented (with CSV export). Update the
-   `Auth/`, `Sync/`, `LocalDb/` placeholder note (`README.md:28`) since `Sync/` is no longer just a
-   placeholder.
+   live against `WorkLedger-API` (self-hosted, single-account, device-bootstrapped JWT), Reports tab
+   implemented (with CSV export). Update the `Auth/`, `Sync/`, `LocalDb/` placeholder note (`README.md:28`)
+   since `Sync/` is no longer just a placeholder. **Also correct the backend description**: `README.md`'s sync
+   section still describes a FastAPI/SQLAlchemy service; the real backend is C#/ASP.NET Core + EF Core +
+   Postgres in the `WorkLedger-API` repo, and its endpoint list should be pointed at that repo's docs rather
+   than restated (and drifted) here.
 11. Confirm all of Plans 1–6 (M0–M5 equivalent) are merged to `main`, then let Release Please pick up the
    accumulated `feat:`/`fix:` commits and produce its automated version-bump PR per this repo's existing
    `release-please.yml` flow — don't hand-edit version numbers outside of what Release Please's config
@@ -152,9 +176,13 @@ during this plan whether the constant needs manual updating or should be added t
 
 ## Out of scope
 
-- No new backend work — the Sync UI's `Api` mode only needs to *configure* `ApiSyncProvider`; there's still
-  no real server for it to talk to (Plan 6's graceful-failure handling is what keeps this safe to expose in
-  the UI regardless).
+- **No backend work, in either repo.** The Sync UI's `Api` mode only *configures* and drives
+  `ApiSyncProvider`; the endpoints, auth, and reconciliation rules belong to `WorkLedger-API`
+  (server plans S2/S3, WL-75/WL-76). Plan 6's graceful-failure handling is what keeps `Api` mode safe to
+  expose in the UI even when the configured server is unreachable or not yet deployed.
+- No server-side reports — `WorkLedger-API` has its own reports endpoints (server plan S4, WL-77). The
+  Reports tab here stays **local-only**, computed from `LocalDbService`, and is deliberately not gated on
+  sync. Consuming the server's cross-device rollups is a later, additive change.
 - No retroactive splitting of `MainWindowViewModel` into smaller viewmodels beyond what's needed for the
   Reports tab — the three-constructor inconsistency and god-viewmodel pattern noted in `CLAUDE.md` are
   explicitly out of scope for this plan to "fix."
@@ -165,7 +193,9 @@ during this plan whether the constant needs manual updating or should be added t
   and a functioning Sync Now button that actually drains the queue through whichever provider is active.
 - Selecting `SyncMode = File` and pointing two app instances (or two temp data directories) at the same sync
   folder results in each seeing the other's project/task/time-entry changes after a manual sync.
-- Selecting `SyncMode = Api` with no real backend configured fails gracefully with a toast, not a crash.
+- Selecting `SyncMode = Api` with no reachable backend configured fails gracefully with a toast, not a crash.
+- With a reachable `WorkLedger-API` instance, the Sync section can register the device (bootstrap secret →
+  issued JWT + expiry stored) and a `Sync Now` in `Api` mode completes a push/pull round-trip.
 - Before `SyncOrchestrator` applies its first remote-wins overwrite/delete in a `RunSyncAsync()` call, a
   backup is triggered per the configured `PreMergeBackupMode` (WL-51).
 - Reports tab shows real weekly per-project and per-task totals sourced from `LocalDbService`, matching what
