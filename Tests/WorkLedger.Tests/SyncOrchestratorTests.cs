@@ -20,14 +20,49 @@ namespace WorkLedger.Tests
         public List<RemoteChange> RemoteChanges { get; set; } = new();
         public List<SyncQueue> ReceivedPush { get; } = new();
 
+        // Every `since` the orchestrator has asked for, so a test can assert on the cursor
+        // without reaching into the orchestrator's state.
+        public List<DateTime> ReceivedPullCursors { get; } = new();
+
+        public DateTime ServerTime { get; set; } = DateTime.UtcNow;
+        public bool PullSucceeds { get; set; } = true;
+
         public Task<SyncResult> PushAsync(IEnumerable<SyncQueue> pendingChanges)
         {
             ReceivedPush.AddRange(pendingChanges);
             return Task.FromResult(PushResult);
         }
 
-        public Task<IEnumerable<RemoteChange>> PullAsync(DateTime since)
-            => Task.FromResult<IEnumerable<RemoteChange>>(RemoteChanges);
+        public Task<PullResult> PullAsync(DateTime since)
+        {
+            ReceivedPullCursors.Add(since);
+
+            if (!PullSucceeds)
+                return Task.FromResult(PullResult.Failed("simulated pull failure"));
+
+            return Task.FromResult(new PullResult
+            {
+                Changes = RemoteChanges.ToList(),
+                ServerTime = ServerTime
+            });
+        }
+    }
+
+    // Minimal ISyncCursorStore that keeps the cursor in memory, standing in for the
+    // settings-backed one so the persistence behaviour can be asserted without touching disk.
+    public class FakeCursorStore : ISyncCursorStore
+    {
+        public FakeCursorStore(DateTime? seed = null) => LastSyncedAtUtc = seed;
+
+        public DateTime? LastSyncedAtUtc { get; private set; }
+
+        public int SaveCount { get; private set; }
+
+        public void Save(DateTime cursor)
+        {
+            LastSyncedAtUtc = cursor;
+            SaveCount++;
+        }
     }
 
     public class SyncOrchestratorTests : IAsyncLifetime
@@ -316,6 +351,127 @@ namespace WorkLedger.Tests
         {
             public int Version { get; set; }
             public string? OriginDeviceId { get; set; }
+        }
+
+        // WL-94: a rejection is the remote's final answer - it refused either because the
+        // payload is invalid or because its own version won, and neither changes on a
+        // re-push. Leaving the row pending would re-push it on every sync forever.
+        [Fact]
+        public async Task RunSyncAsync_RowsTheProviderRejected_AreRetiredRatherThanRetried()
+        {
+            await _db.SaveProjectAsync(new Project { Name = "Rejected" });
+            var queuedId = Assert.Single(await _db.GetAllAsync<SyncQueue>()).Id;
+
+            _provider.PushResult = new SyncResult
+            {
+                RejectedSyncQueueIds = new List<int> { queuedId },
+                Failures = new List<SyncFailure>
+                {
+                    new() { SyncQueueId = queuedId, ErrorMessage = "Server version wins." }
+                }
+            };
+
+            await _orchestrator.RunSyncAsync();
+
+            Assert.Empty(await _db.GetAllAsync<SyncQueue>());
+        }
+
+        // The contrast case: a transport failure decided nothing, so the row has to survive.
+        [Fact]
+        public async Task RunSyncAsync_RowsThatOnlyFailedInTransit_StayQueuedForTheNextAttempt()
+        {
+            await _db.SaveProjectAsync(new Project { Name = "Unreachable" });
+            var queuedId = Assert.Single(await _db.GetAllAsync<SyncQueue>()).Id;
+
+            _provider.PushResult = new SyncResult
+            {
+                Failures = new List<SyncFailure>
+                {
+                    new() { SyncQueueId = queuedId, ErrorMessage = "Could not reach the sync server." }
+                }
+            };
+
+            await _orchestrator.RunSyncAsync();
+
+            Assert.False(Assert.Single(await _db.GetAllAsync<SyncQueue>()).IsSynced);
+        }
+
+        // WL-92: the cursor is the provider's clock, not this device's.
+        [Fact]
+        public async Task RunSyncAsync_AdvancesTheCursorToTheProvidersServerTime()
+        {
+            var serverTime = DateTime.UtcNow.AddHours(-3);
+            _provider.ServerTime = serverTime;
+
+            await _orchestrator.RunSyncAsync();
+            await _orchestrator.RunSyncAsync();
+
+            Assert.Equal(serverTime, _orchestrator.LastSyncedAt);
+            // First pull starts from nothing, second asks from where the server said it was.
+            Assert.Equal(new[] { DateTime.MinValue, serverTime }, _provider.ReceivedPullCursors);
+        }
+
+        // A failed pull is not an empty one: advancing past changes that were never delivered
+        // would skip them permanently.
+        [Fact]
+        public async Task RunSyncAsync_WhenThePullFails_LeavesTheCursorWhereItWas()
+        {
+            _provider.ServerTime = DateTime.UtcNow;
+            await _orchestrator.RunSyncAsync();
+            var cursorAfterSuccess = _orchestrator.LastSyncedAt;
+
+            _provider.PullSucceeds = false;
+            await _orchestrator.RunSyncAsync();
+
+            Assert.Equal(cursorAfterSuccess, _orchestrator.LastSyncedAt);
+        }
+
+        [Fact]
+        public async Task RunSyncAsync_PersistsTheCursor_AndResumesFromItOnTheNextLaunch()
+        {
+            var store = new FakeCursorStore();
+            var serverTime = DateTime.UtcNow.AddMinutes(-10);
+            _provider.ServerTime = serverTime;
+
+            var first = new SyncOrchestrator(_db, _provider, store);
+            await first.RunSyncAsync();
+            Assert.Equal(serverTime, store.LastSyncedAtUtc);
+
+            // A fresh orchestrator over the same store stands in for an app restart. Before
+            // WL-92 this reset to MinValue and re-pulled the entire remote history.
+            _provider.ReceivedPullCursors.Clear();
+            var afterRestart = new SyncOrchestrator(_db, _provider, store);
+            Assert.Equal(serverTime, afterRestart.LastSyncedAt);
+
+            await afterRestart.RunSyncAsync();
+            Assert.Equal(serverTime, Assert.Single(_provider.ReceivedPullCursors));
+        }
+
+        // WL-98: the remote won a conflict, so our copy is stale - and because a losing item
+        // performs no remote write, its timestamp is already behind our cursor and an
+        // incremental pull would never re-deliver it. Rewinding is what fetches the truth.
+        [Fact]
+        public async Task RunSyncAsync_WhenThePushReportsRequiresFullPull_RewindsTheCursorForThatPull()
+        {
+            _provider.ServerTime = DateTime.UtcNow;
+            await _orchestrator.RunSyncAsync();
+            Assert.NotEqual(DateTime.MinValue, _orchestrator.LastSyncedAt);
+
+            await _db.SaveProjectAsync(new Project { Name = "Loser" });
+            var queuedId = Assert.Single(await _db.GetAllAsync<SyncQueue>()).Id;
+            _provider.PushResult = new SyncResult
+            {
+                RejectedSyncQueueIds = new List<int> { queuedId },
+                RequiresFullPull = true
+            };
+
+            _provider.ReceivedPullCursors.Clear();
+            await _orchestrator.RunSyncAsync();
+
+            Assert.Equal(DateTime.MinValue, Assert.Single(_provider.ReceivedPullCursors));
+            // And the cursor is back to server time afterwards, so it's one re-pull, not a
+            // permanent reset.
+            Assert.Equal(_provider.ServerTime, _orchestrator.LastSyncedAt);
         }
 
         // WL-91: the parent link is the half of entity identity that WL-47/WL-56 didn't

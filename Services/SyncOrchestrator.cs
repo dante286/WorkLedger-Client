@@ -40,56 +40,99 @@ namespace WorkLedger_Client.Services
     {
         private readonly LocalDbService _db;
         private readonly ISyncProvider _provider;
+        private readonly ISyncCursorStore? _cursorStore;
         private readonly Timer _syncTimer = new();
 
-        private DateTime _lastSyncedAt = DateTime.MinValue;
+        private DateTime _lastSyncedAt;
 
-        public SyncOrchestrator(LocalDbService db, ISyncProvider provider)
+        // WL-92: cursorStore is optional so a caller with nothing to persist to (tests) gets
+        // in-memory behaviour, but the app passes one - otherwise the cursor resets to
+        // DateTime.MinValue on every launch and each start re-pulls the entire remote
+        // history. That stays *correct*, since the version merge discards what it already
+        // has, but the cost grows without bound as history accumulates.
+        public SyncOrchestrator(LocalDbService db, ISyncProvider provider, ISyncCursorStore? cursorStore = null)
         {
             _db = db;
             _provider = provider;
+            _cursorStore = cursorStore;
+            _lastSyncedAt = cursorStore?.LastSyncedAtUtc ?? DateTime.MinValue;
             _syncTimer.Elapsed += OnSyncElapsed;
         }
 
+        // The cursor this device will pass as the next pull's `since`.
+        public DateTime LastSyncedAt => _lastSyncedAt;
+
         public async Task RunSyncAsync()
         {
-            await PushPendingChangesAsync();
+            var push = await PushPendingChangesAsync();
+
+            // The remote won a conflict, so our copy of that entity is stale and the remote
+            // will not re-announce it (a losing item performs no remote write, precisely so
+            // it doesn't re-broadcast to every device - which also means its timestamp is
+            // already behind our cursor). Rewinding forces the next pull to re-deliver it,
+            // stating the operation rather than making us infer it from a payload. The
+            // version merge makes the extra changes cheap: everything already held loses its
+            // comparison and is discarded. See SyncResult.RequiresFullPull and WL-98.
+            if (push.RequiresFullPull)
+            {
+                Debug.WriteLine("Remote won a push conflict; rewinding the pull cursor for a full re-pull.");
+                _lastSyncedAt = DateTime.MinValue;
+            }
+
             await PullAndMergeRemoteChangesAsync();
             await PruneSyncedQueueAsync();
         }
 
-        private async Task PushPendingChangesAsync()
+        private async Task<SyncResult> PushPendingChangesAsync()
         {
             var pending = await _db.Connection.Table<SyncQueue>()
                 .Where(q => q.IsSynced == false)
                 .ToListAsync();
 
             if (pending.Count == 0)
-                return;
+                return new SyncResult();
 
             var result = await _provider.PushAsync(pending);
-            if (result.AcceptedSyncQueueIds.Count == 0)
-                return;
 
-            var acceptedIds = new HashSet<int>(result.AcceptedSyncQueueIds);
-            foreach (var entry in pending.Where(entry => acceptedIds.Contains(entry.Id)))
+            // WL-94: a row the provider *rejected* is settled too. The remote refuses either
+            // because the payload is invalid or because its own version won, and neither
+            // changes on a re-push - so leaving these pending would re-push them on every
+            // sync forever. Only rows the provider said nothing about (a transport failure,
+            // where nothing was decided) stay queued for the next tick.
+            var settledIds = new HashSet<int>(result.AcceptedSyncQueueIds);
+            settledIds.UnionWith(result.RejectedSyncQueueIds);
+
+            foreach (var entry in pending.Where(entry => settledIds.Contains(entry.Id)))
             {
                 entry.IsSynced = true;
                 await _db.UpdateAsync(entry);
             }
+
+            return result;
         }
 
         private async Task PullAndMergeRemoteChangesAsync()
         {
-            var syncStartedAt = DateTime.UtcNow;
-            var remoteChanges = await _provider.PullAsync(_lastSyncedAt);
+            var pull = await _provider.PullAsync(_lastSyncedAt);
 
-            foreach (var change in OrderParentsFirst(remoteChanges))
+            // A failed pull is not an empty one. Advancing the cursor past changes that were
+            // never delivered would skip them permanently, so a failure leaves it alone and
+            // the next tick asks for the same window again.
+            if (!pull.Succeeded)
+            {
+                Debug.WriteLine($"Sync pull failed, cursor unchanged: {pull.ErrorMessage}");
+                return;
+            }
+
+            foreach (var change in OrderParentsFirst(pull.Changes))
                 await ApplyRemoteChangeAsync(change);
 
             await RelinkOrphanedChildrenAsync();
 
-            _lastSyncedAt = syncStartedAt;
+            // WL-92: the provider's clock, not ours. A device running fast would otherwise
+            // ask for changes since a moment the server hasn't reached and miss the window.
+            _lastSyncedAt = pull.ServerTime;
+            _cursorStore?.Save(_lastSyncedAt);
         }
 
         // WL-91: a child's parent link is resolved from the parent's SyncId at merge time,

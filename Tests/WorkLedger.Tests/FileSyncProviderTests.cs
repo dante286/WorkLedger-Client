@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -88,7 +88,7 @@ namespace WorkLedger.Tests
             await writer.PushAsync(new[] { MakeQueueEntry(1, "task", entityId, "update", 3, "device-b") });
 
             var reader = new FileSyncProvider(_syncFolder, "device-a");
-            var pulled = (await reader.PullAsync(DateTime.MinValue)).ToList();
+            var pulled = (await reader.PullAsync(DateTime.MinValue)).Changes.ToList();
 
             var change = Assert.Single(pulled);
             Assert.Equal("task", change.EntityType);
@@ -103,7 +103,7 @@ namespace WorkLedger.Tests
             var provider = new FileSyncProvider(_syncFolder, "device-a");
             await provider.PushAsync(new[] { MakeQueueEntry(1, "project", Guid.NewGuid(), "create", 1, "device-a") });
 
-            var pulled = await provider.PullAsync(DateTime.MinValue);
+            var pulled = (await provider.PullAsync(DateTime.MinValue)).Changes;
 
             Assert.Empty(pulled);
         }
@@ -120,7 +120,7 @@ namespace WorkLedger.Tests
             await deviceC.PushAsync(new[] { MakeQueueEntry(1, "project", sharedEntityId, "update", 3, "device-c") });
 
             var reader = new FileSyncProvider(_syncFolder, "device-a");
-            var pulled = (await reader.PullAsync(DateTime.MinValue)).ToList();
+            var pulled = (await reader.PullAsync(DateTime.MinValue)).Changes.ToList();
 
             // Both surfaced as distinct RemoteChanges rather than deduplicated - resolving
             // this conflict is SyncOrchestrator's job (Plan 4), not this provider's.
@@ -159,7 +159,7 @@ namespace WorkLedger.Tests
         {
             var provider = new FileSyncProvider(Path.Combine(_syncFolder, "never-created"), "device-a");
 
-            var pulled = await provider.PullAsync(DateTime.MinValue);
+            var pulled = (await provider.PullAsync(DateTime.MinValue)).Changes;
 
             Assert.Empty(pulled);
         }
@@ -210,7 +210,7 @@ namespace WorkLedger.Tests
 
             var provider = new FileSyncProvider(_syncFolder, "device-a", TimeSpan.FromDays(1));
 
-            var pulled = (await provider.PullAsync(DateTime.MinValue)).ToList();
+            var pulled = (await provider.PullAsync(DateTime.MinValue)).Changes.ToList();
 
             // A device that hasn't synced in a while still gets one last look at a change
             // during the very call that discovers it, before its file ages out.

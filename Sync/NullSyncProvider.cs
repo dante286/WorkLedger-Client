@@ -14,7 +14,9 @@ namespace WorkLedger_Client.Sync
         public Task<SyncResult> PushAsync(IEnumerable<SyncQueue> pendingChanges)
             => Task.FromResult(new SyncResult());
 
-        public Task<IEnumerable<RemoteChange>> PullAsync(DateTime since)
-            => Task.FromResult<IEnumerable<RemoteChange>>(Array.Empty<RemoteChange>());
+        // Reports success with the local clock: there is no remote, so "nothing new" is the
+        // truthful answer rather than a failure, and the cursor may safely advance.
+        public Task<PullResult> PullAsync(DateTime since)
+            => Task.FromResult(new PullResult { ServerTime = DateTime.UtcNow });
     }
 }
