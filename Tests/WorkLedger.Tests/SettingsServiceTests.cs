@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using WorkLedger_Client.Services;
+using WorkLedger_Client.Sync;
 using Xunit;
 
 namespace WorkLedger.Tests
@@ -154,6 +155,90 @@ namespace WorkLedger.Tests
             var settings = service.LoadSettings();
 
             Assert.Equal(string.Empty, settings.SyncFolderPath);
+        }
+
+        [Fact]
+        public void LoadSettings_BackfillsMissingApiSyncSettings_ForOlderSettingsFiles()
+        {
+            Directory.CreateDirectory(_tempDataDirectory);
+            var settingsPath = Path.Combine(_tempDataDirectory, SettingsService.SettingsFileName);
+            File.WriteAllText(settingsPath, """
+                {
+                    "Theme": "System",
+                    "DataDirectory": "",
+                    "ApplicationVersion": "1.0.0",
+                    "BackupDirectory": "",
+                    "BackupInterval": "Disabled",
+                    "BackupOnClose": false,
+                    "SyncFolderPath": ""
+                }
+                """);
+
+            var service = new SettingsService(_tempDataDirectory);
+
+            var settings = service.LoadSettings();
+
+            Assert.Equal(string.Empty, settings.ApiEndpoint);
+            Assert.Equal(string.Empty, settings.ApiToken);
+            // Nullable, so "never bootstrapped" and "expired long ago" stay distinguishable -
+            // DateTime.MinValue would conflate them.
+            Assert.Null(settings.ApiTokenExpiresAtUtc);
+            Assert.Null(settings.LastSyncedAtUtc);
+        }
+
+        [Fact]
+        public void SaveSettings_RoundTripsTheApiTokenAndCursor()
+        {
+            var service = new SettingsService(_tempDataDirectory);
+            var settings = service.LoadSettings();
+            var expiry = new DateTime(2027, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            var cursor = new DateTime(2026, 8, 11, 12, 0, 0, DateTimeKind.Utc);
+
+            settings.ApiEndpoint = "https://workledger.example.com";
+            settings.ApiToken = "issued-jwt";
+            settings.ApiTokenExpiresAtUtc = expiry;
+            settings.LastSyncedAtUtc = cursor;
+            service.SaveSettings(settings);
+
+            var reloaded = new SettingsService(_tempDataDirectory).LoadSettings();
+
+            Assert.Equal("https://workledger.example.com", reloaded.ApiEndpoint);
+            Assert.Equal("issued-jwt", reloaded.ApiToken);
+            Assert.Equal(expiry, reloaded.ApiTokenExpiresAtUtc);
+            Assert.Equal(cursor, reloaded.LastSyncedAtUtc);
+        }
+
+        // SettingsSyncStore is what the app passes to the provider and the orchestrator; both
+        // writes have to survive a reload or a restart re-bootstraps and re-pulls everything.
+        [Fact]
+        public void SettingsSyncStore_PersistsBothTheTokenAndTheCursor()
+        {
+            var service = new SettingsService(_tempDataDirectory);
+            var settings = service.LoadSettings();
+            var store = new SettingsSyncStore(service, settings);
+            var expiry = DateTime.UtcNow.AddDays(365);
+            var cursor = DateTime.UtcNow.AddMinutes(-5);
+
+            store.Save("bootstrapped-jwt", expiry);
+            ((ISyncCursorStore)store).Save(cursor);
+
+            Assert.Equal("bootstrapped-jwt", store.Token);
+
+            var reloaded = new SettingsService(_tempDataDirectory).LoadSettings();
+            Assert.Equal("bootstrapped-jwt", reloaded.ApiToken);
+            Assert.Equal(expiry, reloaded.ApiTokenExpiresAtUtc);
+            Assert.Equal(cursor, reloaded.LastSyncedAtUtc);
+        }
+
+        [Fact]
+        public void SettingsSyncStore_ReportsNoToken_WhenTheSettingIsBlank()
+        {
+            var service = new SettingsService(_tempDataDirectory);
+            var settings = service.LoadSettings();
+
+            // Empty string is the on-disk default, but the provider's "do I need to
+            // bootstrap?" check reads it as null.
+            Assert.Null(new SettingsSyncStore(service, settings).Token);
         }
 
         [Fact]

@@ -20,14 +20,49 @@ namespace WorkLedger.Tests
         public List<RemoteChange> RemoteChanges { get; set; } = new();
         public List<SyncQueue> ReceivedPush { get; } = new();
 
+        // Every `since` the orchestrator has asked for, so a test can assert on the cursor
+        // without reaching into the orchestrator's state.
+        public List<DateTime> ReceivedPullCursors { get; } = new();
+
+        public DateTime ServerTime { get; set; } = DateTime.UtcNow;
+        public bool PullSucceeds { get; set; } = true;
+
         public Task<SyncResult> PushAsync(IEnumerable<SyncQueue> pendingChanges)
         {
             ReceivedPush.AddRange(pendingChanges);
             return Task.FromResult(PushResult);
         }
 
-        public Task<IEnumerable<RemoteChange>> PullAsync(DateTime since)
-            => Task.FromResult<IEnumerable<RemoteChange>>(RemoteChanges);
+        public Task<PullResult> PullAsync(DateTime since)
+        {
+            ReceivedPullCursors.Add(since);
+
+            if (!PullSucceeds)
+                return Task.FromResult(PullResult.Failed("simulated pull failure"));
+
+            return Task.FromResult(new PullResult
+            {
+                Changes = RemoteChanges.ToList(),
+                ServerTime = ServerTime
+            });
+        }
+    }
+
+    // Minimal ISyncCursorStore that keeps the cursor in memory, standing in for the
+    // settings-backed one so the persistence behaviour can be asserted without touching disk.
+    public class FakeCursorStore : ISyncCursorStore
+    {
+        public FakeCursorStore(DateTime? seed = null) => LastSyncedAtUtc = seed;
+
+        public DateTime? LastSyncedAtUtc { get; private set; }
+
+        public int SaveCount { get; private set; }
+
+        public void Save(DateTime cursor)
+        {
+            LastSyncedAtUtc = cursor;
+            SaveCount++;
+        }
     }
 
     public class SyncOrchestratorTests : IAsyncLifetime
@@ -244,6 +279,329 @@ namespace WorkLedger.Tests
                 Assert.Equal(2, allOnA.Count);
                 Assert.Contains(allOnA, p => p.SyncId == projectA.SyncId && p.Name == "From A");
                 Assert.Contains(allOnA, p => p.SyncId == projectB.SyncId && p.Name == "From B");
+            }
+            finally
+            {
+                await dbB.Connection.CloseAsync();
+                TryDeleteWithRetries(dbPathB);
+            }
+        }
+
+        // WL-93: the regression the ticket describes, driven end to end off device B's real
+        // SyncQueue rows rather than hand-built RemoteChanges - the bug lived in what
+        // LocalDbService queued, so a test that hand-writes the version would have passed
+        // against the broken code.
+        [Fact]
+        public async Task RunSyncAsync_DeleteFromAnInSyncPeer_RemovesTheLocalRow()
+        {
+            var dbPathB = Path.Combine(Path.GetTempPath(), $"WorkLedgerSyncTests_{Guid.NewGuid()}.db");
+            var dbB = new LocalDbService(dbPathB, RemoteDeviceId);
+            await dbB.Initialization;
+            try
+            {
+                // B creates a project and A pulls it, leaving both devices in sync at Version 1.
+                var projectB = new Project { Name = "Shared" };
+                await dbB.SaveProjectAsync(projectB);
+                _provider.RemoteChanges.AddRange(await ToRemoteChangesAsync(dbB));
+                await _orchestrator.RunSyncAsync();
+
+                var onA = Assert.Single(await _db.GetProjectsAsync());
+                Assert.Equal(projectB.SyncId, onA.SyncId);
+                Assert.Equal(projectB.Version, onA.Version);
+
+                // B deletes it. Before WL-93 the queued tombstone carried Version 1 - the same
+                // version A already holds - so RemoteWins' strict > dropped it on arrival.
+                await dbB.Connection.DeleteAllAsync<SyncQueue>();
+                await dbB.DeleteProjectAsync(projectB);
+
+                _provider.RemoteChanges.Clear();
+                _provider.RemoteChanges.AddRange(await ToRemoteChangesAsync(dbB));
+                await _orchestrator.RunSyncAsync();
+
+                Assert.Empty(await _db.GetProjectsAsync());
+            }
+            finally
+            {
+                await dbB.Connection.CloseAsync();
+                TryDeleteWithRetries(dbPathB);
+            }
+        }
+
+        // Mirrors FileSyncProvider.ToWireEntry: SyncQueue carries no Version/OriginDeviceId
+        // of its own, so both are lifted out of the serialized payload.
+        private static async Task<List<RemoteChange>> ToRemoteChangesAsync(LocalDbService db)
+        {
+            var queued = await db.GetAllAsync<SyncQueue>();
+            return queued.Select(entry =>
+            {
+                var probe = JsonSerializer.Deserialize<VersionProbe>(entry.PayloadJson!);
+                return new RemoteChange
+                {
+                    EntityType = entry.EntityType ?? string.Empty,
+                    EntityId = entry.EntityId,
+                    Operation = entry.Operation ?? string.Empty,
+                    PayloadJson = entry.PayloadJson,
+                    Version = probe?.Version ?? 0,
+                    OriginDeviceId = probe?.OriginDeviceId
+                };
+            }).ToList();
+        }
+
+        private class VersionProbe
+        {
+            public int Version { get; set; }
+            public string? OriginDeviceId { get; set; }
+        }
+
+        // WL-94: a rejection is the remote's final answer - it refused either because the
+        // payload is invalid or because its own version won, and neither changes on a
+        // re-push. Leaving the row pending would re-push it on every sync forever.
+        [Fact]
+        public async Task RunSyncAsync_RowsTheProviderRejected_AreRetiredRatherThanRetried()
+        {
+            await _db.SaveProjectAsync(new Project { Name = "Rejected" });
+            var queuedId = Assert.Single(await _db.GetAllAsync<SyncQueue>()).Id;
+
+            _provider.PushResult = new SyncResult
+            {
+                RejectedSyncQueueIds = new List<int> { queuedId },
+                Failures = new List<SyncFailure>
+                {
+                    new() { SyncQueueId = queuedId, ErrorMessage = "Server version wins." }
+                }
+            };
+
+            await _orchestrator.RunSyncAsync();
+
+            Assert.Empty(await _db.GetAllAsync<SyncQueue>());
+        }
+
+        // The contrast case: a transport failure decided nothing, so the row has to survive.
+        [Fact]
+        public async Task RunSyncAsync_RowsThatOnlyFailedInTransit_StayQueuedForTheNextAttempt()
+        {
+            await _db.SaveProjectAsync(new Project { Name = "Unreachable" });
+            var queuedId = Assert.Single(await _db.GetAllAsync<SyncQueue>()).Id;
+
+            _provider.PushResult = new SyncResult
+            {
+                Failures = new List<SyncFailure>
+                {
+                    new() { SyncQueueId = queuedId, ErrorMessage = "Could not reach the sync server." }
+                }
+            };
+
+            await _orchestrator.RunSyncAsync();
+
+            Assert.False(Assert.Single(await _db.GetAllAsync<SyncQueue>()).IsSynced);
+        }
+
+        // WL-92: the cursor is the provider's clock, not this device's.
+        [Fact]
+        public async Task RunSyncAsync_AdvancesTheCursorToTheProvidersServerTime()
+        {
+            var serverTime = DateTime.UtcNow.AddHours(-3);
+            _provider.ServerTime = serverTime;
+
+            await _orchestrator.RunSyncAsync();
+            await _orchestrator.RunSyncAsync();
+
+            Assert.Equal(serverTime, _orchestrator.LastSyncedAt);
+            // First pull starts from nothing, second asks from where the server said it was.
+            Assert.Equal(new[] { DateTime.MinValue, serverTime }, _provider.ReceivedPullCursors);
+        }
+
+        // A failed pull is not an empty one: advancing past changes that were never delivered
+        // would skip them permanently.
+        [Fact]
+        public async Task RunSyncAsync_WhenThePullFails_LeavesTheCursorWhereItWas()
+        {
+            _provider.ServerTime = DateTime.UtcNow;
+            await _orchestrator.RunSyncAsync();
+            var cursorAfterSuccess = _orchestrator.LastSyncedAt;
+
+            _provider.PullSucceeds = false;
+            await _orchestrator.RunSyncAsync();
+
+            Assert.Equal(cursorAfterSuccess, _orchestrator.LastSyncedAt);
+        }
+
+        [Fact]
+        public async Task RunSyncAsync_PersistsTheCursor_AndResumesFromItOnTheNextLaunch()
+        {
+            var store = new FakeCursorStore();
+            var serverTime = DateTime.UtcNow.AddMinutes(-10);
+            _provider.ServerTime = serverTime;
+
+            var first = new SyncOrchestrator(_db, _provider, store);
+            await first.RunSyncAsync();
+            Assert.Equal(serverTime, store.LastSyncedAtUtc);
+
+            // A fresh orchestrator over the same store stands in for an app restart. Before
+            // WL-92 this reset to MinValue and re-pulled the entire remote history.
+            _provider.ReceivedPullCursors.Clear();
+            var afterRestart = new SyncOrchestrator(_db, _provider, store);
+            Assert.Equal(serverTime, afterRestart.LastSyncedAt);
+
+            await afterRestart.RunSyncAsync();
+            Assert.Equal(serverTime, Assert.Single(_provider.ReceivedPullCursors));
+        }
+
+        // WL-98: the remote won a conflict, so our copy is stale - and because a losing item
+        // performs no remote write, its timestamp is already behind our cursor and an
+        // incremental pull would never re-deliver it. Rewinding is what fetches the truth.
+        [Fact]
+        public async Task RunSyncAsync_WhenThePushReportsRequiresFullPull_RewindsTheCursorForThatPull()
+        {
+            _provider.ServerTime = DateTime.UtcNow;
+            await _orchestrator.RunSyncAsync();
+            Assert.NotEqual(DateTime.MinValue, _orchestrator.LastSyncedAt);
+
+            await _db.SaveProjectAsync(new Project { Name = "Loser" });
+            var queuedId = Assert.Single(await _db.GetAllAsync<SyncQueue>()).Id;
+            _provider.PushResult = new SyncResult
+            {
+                RejectedSyncQueueIds = new List<int> { queuedId },
+                RequiresFullPull = true
+            };
+
+            _provider.ReceivedPullCursors.Clear();
+            await _orchestrator.RunSyncAsync();
+
+            Assert.Equal(DateTime.MinValue, Assert.Single(_provider.ReceivedPullCursors));
+            // And the cursor is back to server time afterwards, so it's one re-pull, not a
+            // permanent reset.
+            Assert.Equal(_provider.ServerTime, _orchestrator.LastSyncedAt);
+        }
+
+        // WL-91: the parent link is the half of entity identity that WL-47/WL-56 didn't
+        // cover. Device B's task points at *B's* local project Id, which on device A belongs
+        // to a different project entirely - so a merge that trusted the incoming int would
+        // silently file the task under the wrong project.
+        [Fact]
+        public async Task RunSyncAsync_ChildFromAnotherDevice_IsRelinkedToTheLocalParentId()
+        {
+            var dbPathB = Path.Combine(Path.GetTempPath(), $"WorkLedgerSyncTests_{Guid.NewGuid()}.db");
+            var dbB = new LocalDbService(dbPathB, RemoteDeviceId);
+            await dbB.Initialization;
+            try
+            {
+                // Give A its own projects first so the same project lands on a different
+                // local Id on each device - otherwise both sides agree by coincidence.
+                await _db.SaveProjectAsync(new Project { Name = "A's first" });
+                await _db.SaveProjectAsync(new Project { Name = "A's second" });
+
+                var projectB = new Project { Name = "From B" };
+                await dbB.SaveProjectAsync(projectB);
+                var taskB = new TaskItem { Name = "B's task", ProjectId = projectB.Id };
+                await dbB.SaveTaskAsync(taskB);
+                var entryB = new TimeEntry { TaskItemId = taskB.Id, StartTime = DateTime.UtcNow };
+                await dbB.SaveTimeEntryAsync(entryB);
+
+                Assert.Equal(1, projectB.Id); // B's local Id, already taken on A
+
+                _provider.RemoteChanges.AddRange(await ToRemoteChangesAsync(dbB));
+                await _orchestrator.RunSyncAsync();
+
+                var mergedProject = Assert.Single(await _db.GetProjectsAsync(), p => p.SyncId == projectB.SyncId);
+                Assert.NotEqual(projectB.Id, mergedProject.Id); // A gave it a different local Id
+
+                var mergedTask = Assert.Single(await _db.GetAllAsync<TaskItem>());
+                Assert.Equal(mergedProject.Id, mergedTask.ProjectId);
+                Assert.Equal(projectB.SyncId, mergedTask.ProjectSyncId);
+
+                var mergedEntry = Assert.Single(await _db.GetAllAsync<TimeEntry>());
+                Assert.Equal(mergedTask.Id, mergedEntry.TaskItemId);
+                Assert.Equal(taskB.SyncId, mergedEntry.TaskSyncId);
+
+                // The whole point of the FK: the task is reachable from its project.
+                var tasksUnderProject = await _db.GetTasksByProjectIdAsync(mergedProject.Id);
+                Assert.Single(tasksUnderProject);
+            }
+            finally
+            {
+                await dbB.Connection.CloseAsync();
+                TryDeleteWithRetries(dbPathB);
+            }
+        }
+
+        // WL-91: a child can legitimately arrive before its parent (separate pulls, or a
+        // parent whose change aged out). It's stored with FK 0, which no GetXByYIdAsync
+        // query matches, so without a re-link pass it stays invisible forever.
+        [Fact]
+        public async Task RunSyncAsync_ChildArrivingBeforeItsParent_IsRelinkedOnTheNextSync()
+        {
+            var dbPathB = Path.Combine(Path.GetTempPath(), $"WorkLedgerSyncTests_{Guid.NewGuid()}.db");
+            var dbB = new LocalDbService(dbPathB, RemoteDeviceId);
+            await dbB.Initialization;
+            try
+            {
+                var projectB = new Project { Name = "Late parent" };
+                await dbB.SaveProjectAsync(projectB);
+                var taskB = new TaskItem { Name = "Early child", ProjectId = projectB.Id };
+                await dbB.SaveTaskAsync(taskB);
+
+                var allChanges = await ToRemoteChangesAsync(dbB);
+
+                // First sync delivers only the task.
+                _provider.RemoteChanges.AddRange(allChanges.Where(c => c.EntityType == "task"));
+                await _orchestrator.RunSyncAsync();
+
+                var orphan = Assert.Single(await _db.GetAllAsync<TaskItem>());
+                Assert.Equal(0, orphan.ProjectId);
+                Assert.Equal(projectB.SyncId, orphan.ProjectSyncId);
+
+                // The project shows up in a later pull.
+                _provider.RemoteChanges.Clear();
+                _provider.RemoteChanges.AddRange(allChanges.Where(c => c.EntityType == "project"));
+                await _orchestrator.RunSyncAsync();
+
+                var mergedProject = Assert.Single(await _db.GetProjectsAsync());
+                var relinked = Assert.Single(await _db.GetAllAsync<TaskItem>());
+                Assert.Equal(mergedProject.Id, relinked.ProjectId);
+            }
+            finally
+            {
+                await dbB.Connection.CloseAsync();
+                TryDeleteWithRetries(dbPathB);
+            }
+        }
+
+        // The re-link repairs a device-local column only. Routing it through SaveTaskAsync
+        // would bump the Version and queue a sync entry, re-broadcasting a local repair to
+        // every peer as though the task itself had changed.
+        [Fact]
+        public async Task RunSyncAsync_RelinkingAnOrphan_DoesNotQueueOrVersionTheRepair()
+        {
+            var dbPathB = Path.Combine(Path.GetTempPath(), $"WorkLedgerSyncTests_{Guid.NewGuid()}.db");
+            var dbB = new LocalDbService(dbPathB, RemoteDeviceId);
+            await dbB.Initialization;
+            try
+            {
+                var projectB = new Project { Name = "Late parent" };
+                await dbB.SaveProjectAsync(projectB);
+                var taskB = new TaskItem { Name = "Early child", ProjectId = projectB.Id };
+                await dbB.SaveTaskAsync(taskB);
+
+                var allChanges = await ToRemoteChangesAsync(dbB);
+
+                _provider.RemoteChanges.AddRange(allChanges.Where(c => c.EntityType == "task"));
+                await _orchestrator.RunSyncAsync();
+                var versionWhileOrphaned = Assert.Single(await _db.GetAllAsync<TaskItem>()).Version;
+                var queuedTaskRowsBefore = (await _db.GetAllAsync<SyncQueue>()).Count(q => q.EntityType == "task");
+
+                _provider.RemoteChanges.Clear();
+                _provider.RemoteChanges.AddRange(allChanges.Where(c => c.EntityType == "project"));
+                await _orchestrator.RunSyncAsync();
+
+                var relinked = Assert.Single(await _db.GetAllAsync<TaskItem>());
+                Assert.Equal(versionWhileOrphaned, relinked.Version);
+
+                // Counted rather than checking ReceivedPush: merging the task in the first
+                // sync already queued a row of its own, which the second sync legitimately
+                // pushes. What must not happen is the re-link adding another one.
+                var queuedTaskRowsAfter = (await _db.GetAllAsync<SyncQueue>()).Count(q => q.EntityType == "task");
+                Assert.Equal(queuedTaskRowsBefore, queuedTaskRowsAfter);
             }
             finally
             {

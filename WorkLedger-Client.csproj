@@ -24,6 +24,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- So SyncContractGuardTests can assert LocalDbService's internal EntityTypes/SyncOperations
+         constants still equal the vendored WorkLedger.Contracts ones. Comparing the literals
+         instead would defeat the point: the guard exists to catch a rename on either side. -->
+    <InternalsVisibleTo Include="WorkLedger.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.3.11" />
     <PackageReference Include="Avalonia.Desktop" Version="11.3.11" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.11" />

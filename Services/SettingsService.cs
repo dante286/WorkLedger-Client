@@ -16,8 +16,29 @@ namespace WorkLedger_Client.Services
         public string BackupDirectory { get; set; } = string.Empty;
         public BackupInterval BackupInterval { get; set; } = BackupInterval.Disabled;
         public bool BackupOnClose { get; set; } = false;
+        // Stable per-install identifier, minted at first run. This is also the DeviceId
+        // ApiSyncProvider registers with the server and the OriginDeviceId stamped on every
+        // row this install writes - there is deliberately only one of these.
         public string DeviceId { get; set; } = string.Empty;
         public string SyncFolderPath { get; set; } = string.Empty;
+
+        // Base URL of the WorkLedger-API instance, e.g. "https://workledger.example.com".
+        public string ApiEndpoint { get; set; } = string.Empty;
+
+        // The JWT the *server* issued to this device via POST /auth/register-device - not a
+        // hand-entered secret. Persisted so a restart doesn't force a re-bootstrap.
+        public string ApiToken { get; set; } = string.Empty;
+
+        // From RegisterDeviceResponse.ExpiresAtUtc, so the provider can re-bootstrap ahead of
+        // expiry instead of discovering it as a 401 mid-sync. Nullable: "never bootstrapped"
+        // and "expired long ago" are different states and DateTime.MinValue conflates them.
+        public DateTime? ApiTokenExpiresAtUtc { get; set; }
+
+        // WL-92: the pull cursor, persisted so it survives a restart, and holding the value
+        // the *provider* reported rather than this device's own clock. There is exactly one
+        // "last synced" timestamp in this app by design - if a Sync settings section needs
+        // something to display (WL-95), it displays this.
+        public DateTime? LastSyncedAtUtc { get; set; }
 
         // WL-61: how long FileSyncProvider keeps processed change files in the sync folder
         // before pruning them. Value == days, mirroring BackupInterval's "value == minutes"
@@ -164,6 +185,21 @@ namespace WorkLedger_Client.Services
                 if (string.IsNullOrWhiteSpace(settings.SyncFolderPath))
                 {
                     settings.SyncFolderPath = string.Empty;
+                    SaveSettings(settings);
+                }
+
+                // Backfill API sync settings if missing (for older settings files). Only the
+                // strings need this - the nullable DateTimes above survive a missing key on
+                // their own, the same way SyncRetentionDays does.
+                if (string.IsNullOrWhiteSpace(settings.ApiEndpoint))
+                {
+                    settings.ApiEndpoint = string.Empty;
+                    SaveSettings(settings);
+                }
+
+                if (string.IsNullOrWhiteSpace(settings.ApiToken))
+                {
+                    settings.ApiToken = string.Empty;
                     SaveSettings(settings);
                 }
 

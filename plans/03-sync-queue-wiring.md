@@ -83,6 +83,17 @@ The methods to touch, all in `Services/LocalDbService.cs`:
   (`Services/LocalDbService.cs:29-39`) — those are generic passthroughs used elsewhere; only the
   entity-specific methods need queuing since only they represent actual user-facing mutations today.
 
+  > **Correction (WL-97).** The first half of that holds — the generic helpers are still the right place to
+  > leave alone. The reason given for it was wrong: "only they represent actual user-facing mutations" was
+  > already false when this was written. `TimerService` was writing time entries through `InsertAsync`/
+  > `UpdateAsync` (`Services/TimerService.cs:73`, `:94`), and the timer is the app's *primary* source of time
+  > entries — so wiring only the entity-specific methods left the main write path unqueued, unstamped, and
+  > (after WL-91) without a parent SyncId. Fixed by pointing both call sites at `SaveTimeEntryAsync`.
+  >
+  > The lesson for future plans in this area: scoping by *method* is only safe once you've checked the
+  > *callers*. `TimerServiceTests` now exists to keep that honest — the gap survived because every test drove
+  > `LocalDbService` directly and none drove the service that actually calls it.
+
 ## Acceptance criteria
 
 - Every create, update, and delete of `Project`, `TaskItem`, `TimeEntry` produces exactly one new `SyncQueue`

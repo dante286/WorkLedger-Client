@@ -70,7 +70,12 @@ namespace WorkLedger_Client.Services
                 StartTime = DateTime.UtcNow
             };
 
-            await _db.InsertAsync(entry);
+            // WL-97: SaveTimeEntryAsync, not the generic InsertAsync. The generic helpers are
+            // bare SQLiteAsyncConnection pass-throughs - they skip the version/SyncId stamping,
+            // the parent-SyncId resolution, and above all the SyncQueue row. Timed work is the
+            // app's main source of time entries, so writing it raw meant the entries that
+            // synced were the hand-added ones and the ones the app exists to record were not.
+            await _db.SaveTimeEntryAsync(entry);
 
             _state.ActiveTask = task;
             _state.ActiveTimeEntry = entry;
@@ -91,7 +96,11 @@ namespace WorkLedger_Client.Services
             entry.DurationSeconds = (long)(entry.EndTime.Value - entry.StartTime).TotalSeconds;
             entry.UpdatedAt = DateTime.UtcNow;
 
-            await _db.UpdateAsync(entry);
+            // WL-97: same reasoning as StartTimerAsync. The entry already has an Id here, so
+            // SaveTimeEntryAsync updates rather than inserts, and the version bump it applies
+            // is what lets the completed entry out-version the running one on other devices -
+            // without it the stop is invisible and the entry stays open everywhere else.
+            await _db.SaveTimeEntryAsync(entry);
 
             // Clear state
             _state.ActiveTask = null;

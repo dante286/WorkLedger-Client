@@ -79,12 +79,17 @@ namespace WorkLedger_Client.Sync
             }
         }
 
-        public Task<IEnumerable<RemoteChange>> PullAsync(DateTime since)
+        public Task<PullResult> PullAsync(DateTime since)
         {
+            // No server in this topology, so the local clock is the honest cursor - see
+            // PullResult.ServerTime. Taken before the scan so a change written during it
+            // isn't skipped by the next call's `since`.
+            var pulledAt = DateTime.UtcNow;
+
             try
             {
                 if (!Directory.Exists(ChangesFolder))
-                    return Task.FromResult<IEnumerable<RemoteChange>>(Array.Empty<RemoteChange>());
+                    return Task.FromResult(new PullResult { ServerTime = pulledAt });
 
                 var results = new List<RemoteChange>();
 
@@ -113,12 +118,12 @@ namespace WorkLedger_Client.Sync
                 // its file ages out - pruning only removes files no longer new to anyone here.
                 PruneOldChangeFiles();
 
-                return Task.FromResult<IEnumerable<RemoteChange>>(results);
+                return Task.FromResult(new PullResult { Changes = results, ServerTime = pulledAt });
             }
             catch (Exception ex) when (IsRecoverableIoFailure(ex))
             {
                 System.Diagnostics.Debug.WriteLine($"FileSyncProvider pull failed: {ex.Message}");
-                return Task.FromResult<IEnumerable<RemoteChange>>(Array.Empty<RemoteChange>());
+                return Task.FromResult(PullResult.Failed(ex.Message));
             }
         }
 
