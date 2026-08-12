@@ -9,6 +9,11 @@ namespace WorkLedger_Client.Models
         public int Id { get; set; }
         [Indexed]
         public int TaskItemId { get; set; }
+
+        // WL-91: cross-device parent link. See the note on TaskItem.ProjectSyncId - same
+        // reasoning, one level down.
+        [Indexed]
+        public Guid TaskSyncId { get; set; }
         public DateTime StartTime { get; set; }
         public DateTime? EndTime { get; set; }
         public long? DurationSeconds { get; set; }

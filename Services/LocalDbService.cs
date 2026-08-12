@@ -60,6 +60,11 @@ namespace WorkLedger_Client.Services
             await BackfillSyncIdsAsync<Project>();
             await BackfillSyncIdsAsync<TaskItem>();
             await BackfillSyncIdsAsync<TimeEntry>();
+
+            // Strictly after BackfillSyncIdsAsync - these resolve each child's parent int
+            // to the parent's SyncId, so every parent needs one first.
+            await BackfillParentSyncIdsAsync("TaskItem", "ProjectSyncId", "Project", "ProjectId");
+            await BackfillParentSyncIdsAsync("TimeEntry", "TaskSyncId", "TaskItem", "TaskItemId");
         }
 
         // sqlite-net-pcl's CreateTableAsync adds missing columns to an existing table via
@@ -98,6 +103,32 @@ namespace WorkLedger_Client.Services
                 await _db.ExecuteAsync(
                     $"UPDATE {tableName} SET SyncId = ? WHERE Id = ?", Guid.NewGuid(), row.Id);
             }
+        }
+
+        // WL-91: fills in a child's cross-device parent link from its local parent int, for
+        // rows written before the column existed. Unlike BackfillSyncIdsAsync this can be a
+        // single correlated UPDATE, since the value isn't per-row-unique - it's looked up.
+        //
+        // A child whose parent int resolves to nothing (an orphan, or a parent that hasn't
+        // synced in yet) has the subquery return NULL and is left alone, so it's retried on
+        // the next launch once the parent exists. That NULL is also why the model property
+        // has no Guid.NewGuid() initializer: sqlite-net-pcl leaves a mapped property at its
+        // C# default when the column is NULL, and Guid.Empty is exactly the "parent unknown"
+        // sentinel the re-link pass looks for. Same NULL-vs-0 caveat as the other backfills.
+        private async Task BackfillParentSyncIdsAsync(
+            string childTable, string parentSyncIdColumn, string parentTable, string parentIdColumn)
+        {
+            var unmigratedCount = await _db.ExecuteScalarAsync<int>(
+                $"SELECT COUNT(*) FROM {childTable} WHERE {parentSyncIdColumn} IS NULL");
+
+            if (unmigratedCount == 0)
+                return;
+
+            await _db.ExecuteAsync(
+                $@"UPDATE {childTable}
+                   SET {parentSyncIdColumn} = (
+                       SELECT p.SyncId FROM {parentTable} p WHERE p.Id = {childTable}.{parentIdColumn})
+                   WHERE {parentSyncIdColumn} IS NULL");
         }
 
         // Column-projection DTO for BackfillSyncIdsAsync's "which rows are missing a SyncId"
@@ -225,8 +256,35 @@ namespace WorkLedger_Client.Services
                       .ToListAsync();
         }
 
+        // WL-91: keeps the cross-device parent link in step with the local one on every
+        // write, so the queued payload carries a SyncId another device can resolve. Only
+        // ever writes a value it actually found - a failed lookup leaves whatever the
+        // caller supplied, which is what lets the orchestrator merge a child that arrives
+        // before its parent without losing the parent SyncId it was told about.
+        private async Task ResolveProjectSyncIdAsync(TaskItem task)
+        {
+            if (task.ProjectId == 0)
+                return;
+
+            var parent = await _db.Table<Project>().Where(p => p.Id == task.ProjectId).FirstOrDefaultAsync();
+            if (parent != null)
+                task.ProjectSyncId = parent.SyncId;
+        }
+
+        private async Task ResolveTaskSyncIdAsync(TimeEntry entry)
+        {
+            if (entry.TaskItemId == 0)
+                return;
+
+            var parent = await _db.Table<TaskItem>().Where(t => t.Id == entry.TaskItemId).FirstOrDefaultAsync();
+            if (parent != null)
+                entry.TaskSyncId = parent.SyncId;
+        }
+
         public async Task<int> SaveTaskAsync(TaskItem task)
         {
+            await ResolveProjectSyncIdAsync(task);
+
             var isInsert = task.Id == 0;
             if (isInsert)
                 StampForInsert(task);
@@ -267,6 +325,8 @@ namespace WorkLedger_Client.Services
 
         public async Task<int> SaveTimeEntryAsync(TimeEntry entry)
         {
+            await ResolveTaskSyncIdAsync(entry);
+
             var isInsert = entry.Id == 0;
             if (isInsert)
                 StampForInsert(entry);

@@ -317,5 +317,141 @@ namespace WorkLedger.Tests
             public int Version { get; set; }
             public string? OriginDeviceId { get; set; }
         }
+
+        // WL-91: the parent link is the half of entity identity that WL-47/WL-56 didn't
+        // cover. Device B's task points at *B's* local project Id, which on device A belongs
+        // to a different project entirely - so a merge that trusted the incoming int would
+        // silently file the task under the wrong project.
+        [Fact]
+        public async Task RunSyncAsync_ChildFromAnotherDevice_IsRelinkedToTheLocalParentId()
+        {
+            var dbPathB = Path.Combine(Path.GetTempPath(), $"WorkLedgerSyncTests_{Guid.NewGuid()}.db");
+            var dbB = new LocalDbService(dbPathB, RemoteDeviceId);
+            await dbB.Initialization;
+            try
+            {
+                // Give A its own projects first so the same project lands on a different
+                // local Id on each device - otherwise both sides agree by coincidence.
+                await _db.SaveProjectAsync(new Project { Name = "A's first" });
+                await _db.SaveProjectAsync(new Project { Name = "A's second" });
+
+                var projectB = new Project { Name = "From B" };
+                await dbB.SaveProjectAsync(projectB);
+                var taskB = new TaskItem { Name = "B's task", ProjectId = projectB.Id };
+                await dbB.SaveTaskAsync(taskB);
+                var entryB = new TimeEntry { TaskItemId = taskB.Id, StartTime = DateTime.UtcNow };
+                await dbB.SaveTimeEntryAsync(entryB);
+
+                Assert.Equal(1, projectB.Id); // B's local Id, already taken on A
+
+                _provider.RemoteChanges.AddRange(await ToRemoteChangesAsync(dbB));
+                await _orchestrator.RunSyncAsync();
+
+                var mergedProject = Assert.Single(await _db.GetProjectsAsync(), p => p.SyncId == projectB.SyncId);
+                Assert.NotEqual(projectB.Id, mergedProject.Id); // A gave it a different local Id
+
+                var mergedTask = Assert.Single(await _db.GetAllAsync<TaskItem>());
+                Assert.Equal(mergedProject.Id, mergedTask.ProjectId);
+                Assert.Equal(projectB.SyncId, mergedTask.ProjectSyncId);
+
+                var mergedEntry = Assert.Single(await _db.GetAllAsync<TimeEntry>());
+                Assert.Equal(mergedTask.Id, mergedEntry.TaskItemId);
+                Assert.Equal(taskB.SyncId, mergedEntry.TaskSyncId);
+
+                // The whole point of the FK: the task is reachable from its project.
+                var tasksUnderProject = await _db.GetTasksByProjectIdAsync(mergedProject.Id);
+                Assert.Single(tasksUnderProject);
+            }
+            finally
+            {
+                await dbB.Connection.CloseAsync();
+                TryDeleteWithRetries(dbPathB);
+            }
+        }
+
+        // WL-91: a child can legitimately arrive before its parent (separate pulls, or a
+        // parent whose change aged out). It's stored with FK 0, which no GetXByYIdAsync
+        // query matches, so without a re-link pass it stays invisible forever.
+        [Fact]
+        public async Task RunSyncAsync_ChildArrivingBeforeItsParent_IsRelinkedOnTheNextSync()
+        {
+            var dbPathB = Path.Combine(Path.GetTempPath(), $"WorkLedgerSyncTests_{Guid.NewGuid()}.db");
+            var dbB = new LocalDbService(dbPathB, RemoteDeviceId);
+            await dbB.Initialization;
+            try
+            {
+                var projectB = new Project { Name = "Late parent" };
+                await dbB.SaveProjectAsync(projectB);
+                var taskB = new TaskItem { Name = "Early child", ProjectId = projectB.Id };
+                await dbB.SaveTaskAsync(taskB);
+
+                var allChanges = await ToRemoteChangesAsync(dbB);
+
+                // First sync delivers only the task.
+                _provider.RemoteChanges.AddRange(allChanges.Where(c => c.EntityType == "task"));
+                await _orchestrator.RunSyncAsync();
+
+                var orphan = Assert.Single(await _db.GetAllAsync<TaskItem>());
+                Assert.Equal(0, orphan.ProjectId);
+                Assert.Equal(projectB.SyncId, orphan.ProjectSyncId);
+
+                // The project shows up in a later pull.
+                _provider.RemoteChanges.Clear();
+                _provider.RemoteChanges.AddRange(allChanges.Where(c => c.EntityType == "project"));
+                await _orchestrator.RunSyncAsync();
+
+                var mergedProject = Assert.Single(await _db.GetProjectsAsync());
+                var relinked = Assert.Single(await _db.GetAllAsync<TaskItem>());
+                Assert.Equal(mergedProject.Id, relinked.ProjectId);
+            }
+            finally
+            {
+                await dbB.Connection.CloseAsync();
+                TryDeleteWithRetries(dbPathB);
+            }
+        }
+
+        // The re-link repairs a device-local column only. Routing it through SaveTaskAsync
+        // would bump the Version and queue a sync entry, re-broadcasting a local repair to
+        // every peer as though the task itself had changed.
+        [Fact]
+        public async Task RunSyncAsync_RelinkingAnOrphan_DoesNotQueueOrVersionTheRepair()
+        {
+            var dbPathB = Path.Combine(Path.GetTempPath(), $"WorkLedgerSyncTests_{Guid.NewGuid()}.db");
+            var dbB = new LocalDbService(dbPathB, RemoteDeviceId);
+            await dbB.Initialization;
+            try
+            {
+                var projectB = new Project { Name = "Late parent" };
+                await dbB.SaveProjectAsync(projectB);
+                var taskB = new TaskItem { Name = "Early child", ProjectId = projectB.Id };
+                await dbB.SaveTaskAsync(taskB);
+
+                var allChanges = await ToRemoteChangesAsync(dbB);
+
+                _provider.RemoteChanges.AddRange(allChanges.Where(c => c.EntityType == "task"));
+                await _orchestrator.RunSyncAsync();
+                var versionWhileOrphaned = Assert.Single(await _db.GetAllAsync<TaskItem>()).Version;
+                var queuedTaskRowsBefore = (await _db.GetAllAsync<SyncQueue>()).Count(q => q.EntityType == "task");
+
+                _provider.RemoteChanges.Clear();
+                _provider.RemoteChanges.AddRange(allChanges.Where(c => c.EntityType == "project"));
+                await _orchestrator.RunSyncAsync();
+
+                var relinked = Assert.Single(await _db.GetAllAsync<TaskItem>());
+                Assert.Equal(versionWhileOrphaned, relinked.Version);
+
+                // Counted rather than checking ReceivedPush: merging the task in the first
+                // sync already queued a row of its own, which the second sync legitimately
+                // pushes. What must not happen is the re-link adding another one.
+                var queuedTaskRowsAfter = (await _db.GetAllAsync<SyncQueue>()).Count(q => q.EntityType == "task");
+                Assert.Equal(queuedTaskRowsBefore, queuedTaskRowsAfter);
+            }
+            finally
+            {
+                await dbB.Connection.CloseAsync();
+                TryDeleteWithRetries(dbPathB);
+            }
+        }
     }
 }

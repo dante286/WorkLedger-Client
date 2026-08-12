@@ -29,6 +29,13 @@ namespace WorkLedger_Client.Services
     // RemoteChange's SyncId has no local match, the incoming entity's Id is left at 0 so
     // SaveXAsync inserts a new row (getting its own fresh local Id) rather than updating
     // one that doesn't exist.
+    //
+    // Parent links (WL-91): the same argument applies one level down, to TaskItem.ProjectId
+    // and TimeEntry.TaskItemId. Those ints are the authoring device's and are always
+    // recomputed here from the payload's ProjectSyncId/TaskSyncId, never merged through.
+    // Changes are applied parents-first so a batch carrying all three types resolves in one
+    // pass, and RelinkOrphanedChildrenAsync catches the rest when a child arrives ahead of
+    // its parent.
     public class SyncOrchestrator
     {
         private readonly LocalDbService _db;
@@ -77,11 +84,27 @@ namespace WorkLedger_Client.Services
             var syncStartedAt = DateTime.UtcNow;
             var remoteChanges = await _provider.PullAsync(_lastSyncedAt);
 
-            foreach (var change in remoteChanges)
+            foreach (var change in OrderParentsFirst(remoteChanges))
                 await ApplyRemoteChangeAsync(change);
+
+            await RelinkOrphanedChildrenAsync();
 
             _lastSyncedAt = syncStartedAt;
         }
+
+        // WL-91: a child's parent link is resolved from the parent's SyncId at merge time,
+        // so a task merged before its project can't find it. Applying projects -> tasks ->
+        // time entries makes the common case (a batch holding all three) resolve on the
+        // first pass. This mirrors the ordering the server applies a push batch in, and is
+        // a stable sort, so several changes for one entity keep their relative order.
+        private static IEnumerable<RemoteChange> OrderParentsFirst(IEnumerable<RemoteChange> changes)
+            => changes.OrderBy(change => change.EntityType switch
+            {
+                LocalDbService.EntityTypes.Project => 0,
+                LocalDbService.EntityTypes.Task => 1,
+                LocalDbService.EntityTypes.TimeEntry => 2,
+                _ => 3
+            });
 
         // WL-49/WL-60: nothing else in the sync pipeline prunes SyncQueue, so it would
         // otherwise grow without bound for the life of the install. Rows are only useful
@@ -150,6 +173,12 @@ namespace WorkLedger_Client.Services
             incoming.Id = local?.Id ?? 0;
             incoming.SyncId = change.EntityId;
             incoming.Version = change.Version;
+
+            // WL-91: ProjectId as received is the *authoring* device's local autoincrement
+            // value and means nothing here, so it is always overwritten - never merged
+            // through. ProjectSyncId is the half that travels; 0 marks an orphan for
+            // RelinkOrphanedChildrenAsync to pick up once the project arrives.
+            incoming.ProjectId = await ResolveLocalProjectIdAsync(incoming.ProjectSyncId);
             await _db.SaveTaskAsync(incoming);
         }
 
@@ -170,7 +199,78 @@ namespace WorkLedger_Client.Services
             incoming.Id = local?.Id ?? 0;
             incoming.SyncId = change.EntityId;
             incoming.Version = change.Version;
+
+            // WL-91: see the note in ApplyTaskChangeAsync - same rule one level down.
+            incoming.TaskItemId = await ResolveLocalTaskIdAsync(incoming.TaskSyncId);
             await _db.SaveTimeEntryAsync(incoming);
+        }
+
+        // Map a cross-device parent SyncId to whatever local autoincrement Id that parent
+        // happens to hold on this device. 0 - the value an unset foreign key already has -
+        // means the parent isn't here yet. Written out per type rather than generically
+        // because IVersionedEntity has no Id, and sqlite-net resolves Table<T> predicates
+        // by reflecting over the concrete mapped type.
+        private async Task<int> ResolveLocalProjectIdAsync(Guid projectSyncId)
+        {
+            if (projectSyncId == Guid.Empty)
+                return 0;
+
+            var parent = await _db.Connection.Table<Project>()
+                .Where(p => p.SyncId == projectSyncId)
+                .FirstOrDefaultAsync();
+            return parent?.Id ?? 0;
+        }
+
+        private async Task<int> ResolveLocalTaskIdAsync(Guid taskSyncId)
+        {
+            if (taskSyncId == Guid.Empty)
+                return 0;
+
+            var parent = await _db.Connection.Table<TaskItem>()
+                .Where(t => t.SyncId == taskSyncId)
+                .FirstOrDefaultAsync();
+            return parent?.Id ?? 0;
+        }
+
+        // WL-91: a child whose parent hadn't synced in yet was stored with its foreign key
+        // at 0, which makes it invisible to every GetXByYIdAsync query - permanently, since
+        // nothing would revisit it. Its ProjectSyncId/TaskSyncId still records which parent
+        // it wants, so once that parent lands this re-links it. Runs after every merge pass
+        // and is a no-write no-op when there are no orphans.
+        //
+        // Writes through the raw UpdateAsync rather than SaveXAsync deliberately: re-linking
+        // repairs a device-local column, and nothing about the entity changed that another
+        // device could act on. Going through SaveXAsync would bump the Version and queue a
+        // sync entry, re-broadcasting a purely local repair to every peer.
+        private async Task RelinkOrphanedChildrenAsync()
+        {
+            var orphanedTasks = await _db.Connection.Table<TaskItem>()
+                .Where(t => t.ProjectId == 0)
+                .ToListAsync();
+
+            foreach (var task in orphanedTasks)
+            {
+                var projectId = await ResolveLocalProjectIdAsync(task.ProjectSyncId);
+                if (projectId == 0)
+                    continue;
+
+                task.ProjectId = projectId;
+                await _db.UpdateAsync(task);
+            }
+
+            var orphanedEntries = await _db.Connection.Table<TimeEntry>()
+                .Where(e => e.TaskItemId == 0)
+                .ToListAsync();
+
+            foreach (var entry in orphanedEntries)
+            {
+                var taskId = await ResolveLocalTaskIdAsync(entry.TaskSyncId);
+                if (taskId == 0)
+                    continue;
+
+                entry.TaskItemId = taskId;
+                await _db.UpdateAsync(entry);
+            }
         }
 
         // Missing local row counts as Version 0; a full tie leaves local untouched.

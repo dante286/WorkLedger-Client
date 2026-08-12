@@ -209,6 +209,114 @@ namespace WorkLedger.Tests
             public string? OriginDeviceId { get; set; }
         }
 
+        // WL-91: the local FK int is meaningless off-device, so every write has to record
+        // the parent's SyncId alongside it or the queued payload ships an unresolvable link.
+        [Fact]
+        public async Task SaveTaskAsync_PopulatesProjectSyncIdFromTheParentProject()
+        {
+            var project = new Project { Name = "Parent" };
+            await _service.SaveProjectAsync(project);
+
+            var task = new TaskItem { Name = "Child", ProjectId = project.Id };
+            await _service.SaveTaskAsync(task);
+
+            var stored = await _service.GetByIdAsync<TaskItem>(task.Id);
+            Assert.Equal(project.SyncId, stored.ProjectSyncId);
+        }
+
+        [Fact]
+        public async Task SaveTimeEntryAsync_PopulatesTaskSyncIdFromTheParentTask()
+        {
+            var project = new Project { Name = "Parent" };
+            await _service.SaveProjectAsync(project);
+            var task = new TaskItem { Name = "Child", ProjectId = project.Id };
+            await _service.SaveTaskAsync(task);
+
+            var entry = new TimeEntry { TaskItemId = task.Id, StartTime = DateTime.UtcNow };
+            await _service.SaveTimeEntryAsync(entry);
+
+            var stored = await _service.GetByIdAsync<TimeEntry>(entry.Id);
+            Assert.Equal(task.SyncId, stored.TaskSyncId);
+        }
+
+        // A parent that isn't in the database yet must not overwrite whatever parent SyncId
+        // the caller supplied - that's what lets the orchestrator merge a child that arrived
+        // ahead of its parent without losing the link it was told about.
+        [Fact]
+        public async Task SaveTaskAsync_WithUnresolvableParent_LeavesTheSuppliedProjectSyncIdIntact()
+        {
+            var absentParent = Guid.NewGuid();
+            var task = new TaskItem { Name = "Orphan", ProjectId = 0, ProjectSyncId = absentParent };
+
+            await _service.SaveTaskAsync(task);
+
+            var stored = await _service.GetByIdAsync<TaskItem>(task.Id);
+            Assert.Equal(absentParent, stored.ProjectSyncId);
+            Assert.Equal(0, stored.ProjectId);
+        }
+
+        [Fact]
+        public async Task SaveTaskAsync_QueuesAPayloadCarryingTheParentSyncId()
+        {
+            var project = new Project { Name = "Parent" };
+            await _service.SaveProjectAsync(project);
+
+            var task = new TaskItem { Name = "Child", ProjectId = project.Id };
+            await _service.SaveTaskAsync(task);
+
+            var queue = await _service.GetAllAsync<SyncQueue>();
+            var taskEntry = Assert.Single(queue, q => q.EntityType == "task");
+            var payload = JsonSerializer.Deserialize<TaskItem>(taskEntry.PayloadJson!);
+            Assert.Equal(project.SyncId, payload!.ProjectSyncId);
+        }
+
+        // WL-91: databases written before the parent-SyncId columns existed need the link
+        // reconstructed from the local FK int they do have.
+        [Fact]
+        public async Task Migration_BackfillsParentSyncIdsFromExistingLocalForeignKeys()
+        {
+            var migrationDbPath = Path.Combine(Path.GetTempPath(), $"WorkLedgerParentMigration_{Guid.NewGuid()}.db");
+            try
+            {
+                // Pre-WL-91 schema: children carry only the local int.
+                var seed = new SQLiteAsyncConnection(migrationDbPath);
+                await seed.ExecuteAsync(
+                    "CREATE TABLE Project (Id INTEGER PRIMARY KEY AUTOINCREMENT, Name TEXT, ProjectCode TEXT, Description TEXT, CreatedAt TEXT, UpdatedAt TEXT, Version INTEGER, OriginDeviceId TEXT, SyncId TEXT)");
+                await seed.ExecuteAsync(
+                    "CREATE TABLE TaskItem (Id INTEGER PRIMARY KEY AUTOINCREMENT, ProjectId INTEGER, Name TEXT, Notes TEXT, IsCompleted INTEGER, IsArchived INTEGER, CreatedAt TEXT, UpdatedAt TEXT, Version INTEGER, OriginDeviceId TEXT, SyncId TEXT)");
+                await seed.ExecuteAsync(
+                    "CREATE TABLE TimeEntry (Id INTEGER PRIMARY KEY AUTOINCREMENT, TaskItemId INTEGER, StartTime TEXT, EndTime TEXT, DurationSeconds INTEGER, CreatedAt TEXT, UpdatedAt TEXT, Version INTEGER, OriginDeviceId TEXT, SyncId TEXT)");
+
+                var projectSyncId = Guid.NewGuid();
+                var taskSyncId = Guid.NewGuid();
+                await seed.ExecuteAsync(
+                    "INSERT INTO Project (Id, Name, CreatedAt, Version, SyncId) VALUES (1, 'Legacy', ?, 1, ?)",
+                    DateTime.UtcNow, projectSyncId);
+                await seed.ExecuteAsync(
+                    "INSERT INTO TaskItem (Id, ProjectId, Name, CreatedAt, Version, SyncId) VALUES (1, 1, 'Legacy Task', ?, 1, ?)",
+                    DateTime.UtcNow, taskSyncId);
+                await seed.ExecuteAsync(
+                    "INSERT INTO TimeEntry (Id, TaskItemId, StartTime, CreatedAt, Version, SyncId) VALUES (1, 1, ?, ?, 1, ?)",
+                    DateTime.UtcNow, DateTime.UtcNow, Guid.NewGuid());
+                await seed.CloseAsync();
+
+                var migrated = new LocalDbService(migrationDbPath, "device-migrated");
+                await migrated.Initialization;
+
+                var task = Assert.Single(await migrated.GetAllAsync<TaskItem>());
+                Assert.Equal(projectSyncId, task.ProjectSyncId);
+
+                var entry = Assert.Single(await migrated.GetAllAsync<TimeEntry>());
+                Assert.Equal(taskSyncId, entry.TaskSyncId);
+
+                await migrated.Connection.CloseAsync();
+            }
+            finally
+            {
+                TryDeleteWithRetries(migrationDbPath);
+            }
+        }
+
         [Fact]
         public async Task SaveTaskAsync_WithZeroId_EnqueuesCreateSyncEntry()
         {
