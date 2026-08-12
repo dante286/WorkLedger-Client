@@ -19,7 +19,7 @@ rather than getting its own file, so there are 7 plans covering the 8 original m
 | 3 | [03-sync-queue-wiring.md](03-sync-queue-wiring.md) | TBD | 2 |
 | 4 | [04-sync-abstraction-orchestrator.md](04-sync-abstraction-orchestrator.md) | TBD | 2 (parallel with 3) |
 | 5 | [05-file-sync-provider.md](05-file-sync-provider.md) | TBD | 4 |
-| 6 | [06-api-sync-provider.md](06-api-sync-provider.md) | TBD | 4, **WL-91**, **WL-93** |
+| 6 | [06-api-sync-provider.md](06-api-sync-provider.md) | [WL-96](https://mnisan.atlassian.net/browse/WL-96) | 4, ~~WL-91~~, ~~WL-93~~ (both fixed on plan 6's branch) |
 | 7 | [07-sync-reports-ui-and-release.md](07-sync-reports-ui-and-release.md) | TBD | 4, 5 |
 
 ## Sequencing

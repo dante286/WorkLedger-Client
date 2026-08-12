@@ -1,11 +1,15 @@
-# Plan 6 — API Sync Provider (ticket TBD — see note in README.md)
+# Plan 6 — API Sync Provider ([WL-96](https://mnisan.atlassian.net/browse/WL-96))
 
 > **Rewritten 2026-08-11.** This plan used to describe a *stub* against a hypothetical FastAPI backend that
 > "does not exist yet." That is no longer true: the backend is a real repo (`WorkLedger-API`), it is
 > **C#/ASP.NET Core + EF Core + Postgres**, not FastAPI, and its scaffold, data model, and auth (server plans
-> S0/S1/S2) are merged. The sync endpoints this provider calls are server plan S3 / **WL-76**, in flight.
-> The section below replaces the old "document a contract nobody implements" scope with the **actual** wire
-> contract, so the two repos cannot drift.
+> S0/S1/S2) are merged. The section below replaces the old "document a contract nobody implements" scope with
+> the **actual** wire contract, so the two repos cannot drift.
+>
+> **Server status update (2026-08-11, later the same day):** server plan S3 / **WL-76** and its subtasks
+> WL-82/83/84 are **Done** and merged (`WorkLedger-API@1654a65`). `POST /sync/push`, `GET /sync/pull`,
+> `POST /auth/register-device`, and `GET /auth/whoami` are all live. Earlier text describing S3 as "in flight"
+> is stale.
 
 ## Context
 
@@ -20,8 +24,8 @@ What already exists on the server (`WorkLedger-API`, `main`):
 |---|---|---|
 | `POST /auth/register-device` | anonymous + `X-Bootstrap-Secret` header | `RegisterDeviceRequest(DeviceId, Label)` → `RegisterDeviceResponse(Token, ExpiresAtUtc)`. Idempotent per `DeviceId`. |
 | `GET /auth/whoami` | bearer | `WhoAmIResponse(AccountId, DeviceId)` — useful as a cheap connectivity/token check. |
-| `POST /sync/push` | bearer | `SyncPushRequest(Changes)` → `SyncPushResponse(Results, ServerTime)` (S3/WL-76). |
-| `GET /sync/pull?since=<ISO8601>` | bearer | → `SyncPullResponse(Changes, ServerTime)` (S3/WL-76). |
+| `POST /sync/push` | bearer | `SyncPushRequest(Changes)` → `SyncPushResponse(Results, ServerTime)` (S3/WL-76, **shipped**). |
+| `GET /sync/pull?since=<ISO8601>` | bearer | → `SyncPullResponse(Changes, ServerTime)` (S3/WL-76, **shipped**). |
 | `GET /health` | anonymous | liveness. |
 
 Every endpoint except `/health`, `/`, and `/auth/register-device` requires a valid JWT; the server is
@@ -31,9 +35,10 @@ account-scoped server-side. There is nothing for this provider to do about tenan
 Depends on Plan 4 (`ISyncProvider`, `SyncResult`, `RemoteChange`) — same as Plan 5, a second concrete provider
 against the same abstraction, implemented independently of `FileSyncProvider`.
 
-**Blocked on two client-side bugs** (found while reconciling this contract; see "Prerequisites" below):
+**Was blocked on two client-side bugs** (found while reconciling this contract; see "Prerequisites" below):
 **WL-91** (entities carry no parent `SyncId`) and **WL-93** (deletes are queued without a version bump).
-Without WL-91 every task and time entry this provider pushes is rejected by the server as an orphan.
+Without WL-91 every task and time entry this provider pushes is rejected by the server as an orphan. Both are
+**fixed**, as the first two commits on this plan's branch.
 
 Existing pattern to reuse for user-facing error surfacing: `Services/ToastService.cs` already spawns transient
 `ToastWindow` notifications; connection failures should stay structured/catchable so Plan 7 can toast them.
@@ -70,8 +75,10 @@ If any of them changes, it changes in **both** repos in the same breath.
   `SyncResult` can legitimately accept a change the server did not apply; do not treat "accepted" as "the
   server's row now equals what I sent."
 - **The pull cursor is server time.** `SyncPullResponse.ServerTime` is what the next `since` must be, not our
-  own `UtcNow`. See **WL-92** for the orchestrator-side change that makes that possible; until it lands this
-  provider should still surface `ServerTime` so the plumbing is ready.
+  own `UtcNow`. **WL-92 landed with this plan**: `ISyncProvider.PullAsync` now returns a `PullResult`
+  (`Changes`, `ServerTime`, `Succeeded`), the orchestrator adopts `ServerTime` as its cursor and persists it
+  through `ISyncCursorStore`, and a *failed* pull leaves the cursor alone — advancing past changes that were
+  never delivered would skip them permanently, so a failure has to be distinguishable from an empty result.
 - **JSON policy: PascalCase out, case-insensitive in.** Use the shared `SyncJson.Options` from
   `WorkLedger.Contracts` for **all** payload (de)serialization. This is not cosmetic: the orchestrator reads
   payloads with plain `JsonSerializer.Deserialize<T>(payloadJson)` and default, **case-sensitive** options
@@ -98,6 +105,17 @@ If any of them changes, it changes in **both** repos in the same breath.
 WL-92 (persisted, server-authoritative cursor) and WL-94 (positional result mapping) are scoped *inside* this
 plan's work rather than ahead of it.
 
+**As built (branch `06-api-sync-provider`):** WL-93 and WL-91 landed as the first two commits on this branch,
+ahead of the provider, rather than as separate PRs. WL-92 and WL-94 landed with it as planned.
+
+Two further items were found while building this and deliberately left out of scope:
+
+- **WL-97** — `TimerService` writes time entries through `LocalDbService`'s raw generic `InsertAsync`/
+  `UpdateAsync` helpers rather than `SaveTimeEntryAsync`, so timer-produced entries get no `SyncQueue` row at
+  all, no version stamping, and no parent-SyncId resolution. That is the app's primary time-entry path, so
+  end-to-end API sync can't be demonstrated with timed work until it lands. Plan 03's boundary, not this one's.
+- **WL-98** — the tombstone ambiguity in `SyncItemResult` described under Scope 4.
+
 ## Scope
 
 1. **Take a dependency on `WorkLedger.Contracts`.** Preferred: the published package (server plan S0 covers
@@ -106,6 +124,12 @@ plan's work rather than ahead of it.
    new shapes. Types used here: `SyncChangeDto`, `SyncPushRequest`, `SyncPushResponse`, `SyncItemResult`,
    `SyncPullResponse`, `ProjectPayload`, `TaskItemPayload`, `TimeEntryPayload`, `RegisterDeviceRequest`,
    `RegisterDeviceResponse`, plus `SyncJson.Options` and the entity-type/operation constants.
+
+   **As built:** vendored. `WorkLedger.Contracts.csproj` has no packaging properties and the API repo's only
+   workflow is `build.yml`, so there is nothing to reference; a cross-repo `ProjectReference` would build
+   locally and fail CI, which checks out only this repo. The files live under `Sync/Contracts/` with upstream
+   namespaces intact (so swapping in a real `PackageReference` later is a delete plus one line) and a header
+   naming source commit `3e6e955`. See `Sync/Contracts/README.md`.
 
 2. **Settings** (`Services/SettingsService.cs`, following the `BackupDirectory`/`SyncFolderPath`
    empty-string-default + backfill pattern):
@@ -137,6 +161,18 @@ plan's work rather than ahead of it.
    - When an item comes back `Accepted = false` with an `AuthoritativePayloadJson`, that payload is the
      winning record. Either apply it immediately or leave a clearly-marked seam for the orchestrator to do so
      — decide and document; do not silently drop it.
+
+     **Decided: neither — request a re-pull instead, because adopting it directly is unsafe.**
+     `SyncItemResult` has no field saying whether the winning row is a *tombstone*, and the payload DTOs carry
+     no `IsDeleted` either. Reachable case: a third device deleted the entity (tombstone at v5) while this one
+     pushes an update at v4 — `SyncService.ApplyUpsert`'s conflict branch hands back the tombstone's payload,
+     and synthesizing an `"update"` from it would resurrect a deleted row locally and permanently. So the
+     provider sets `SyncResult.RequiresFullPull` (an authoritative payload is present only when the server's
+     row won — a validation failure passes `null` there) and `SyncOrchestrator` rewinds its cursor to
+     `DateTime.MinValue` for the next pull, which states the operation explicitly. Note a plain incremental
+     pull is not enough on its own: a losing item performs no server-side write by design, so the winner's
+     `UpdatedAt` is already behind the cursor. Filed as **WL-98** to add an `AuthoritativeOperation` to the
+     Contracts DTO and drop the rewind.
    - `PullAsync(since)`: `GET {baseUrl}/sync/pull?since={since:o}`, map each `SyncChangeDto` → `RemoteChange`,
      and surface `ServerTime` for the cursor (WL-92).
    - **Failure handling remains the core requirement**: unreachable host, DNS failure, timeout, non-2xx,
