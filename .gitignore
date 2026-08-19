@@ -5,7 +5,3 @@ obj/
 bin/
 *.user
 .aider*
-
-.claude/*
-
-GEMINI.md
