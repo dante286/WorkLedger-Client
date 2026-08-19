@@ -24,14 +24,18 @@ namespace WorkLedger_Client.Sync
         // because the payload was invalid. The orchestrator answers by rewinding its pull
         // cursor so the next pull re-delivers the remote's authoritative state.
         //
-        // That indirection is not laziness - it's the only safe option. The server hands
-        // back the winning payload on rejection, but SyncItemResult has no field saying
-        // whether the winning row is a *tombstone*, and the payload DTOs carry no IsDeleted
-        // either. Reachable case: a third device deleted the entity (tombstone at v5) while
-        // we push an update at v4. Synthesizing an "update" from that payload would
-        // resurrect a deleted row, locally and permanently. A pull states the operation
-        // explicitly ("delete" when IsDeleted), so asking for one gets the truth instead of
-        // a guess. See WL-98.
+        // That indirection is conservative, not required. The server hands back the winning
+        // payload on rejection, and since WL-98 it also says what that payload *is* -
+        // SyncItemResult.AuthoritativeOperation is "update" for a live row and "delete" for a
+        // tombstone. The payload DTOs still carry no IsDeleted, so the operation field is the
+        // only thing that distinguishes them, and getting it wrong is unrecoverable:
+        // synthesizing an "update" from a tombstone resurrects a deleted row locally and
+        // permanently (reachable case - a third device deleted the entity at v5 while we push
+        // an update at v4).
+        //
+        // Asking for a re-pull sidesteps the question entirely, because a pull always states
+        // the operation. Adopting AuthoritativeOperation directly would be cheaper and is the
+        // intended next step now that the field is vendored (WL-101); until then this stays a re-pull.
         //
         // A plain re-pull isn't enough on its own: a losing item performs no write
         // server-side (deliberately - a write would restamp UpdatedAt and re-broadcast the

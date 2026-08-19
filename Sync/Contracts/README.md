@@ -2,8 +2,13 @@
 
 These files are **copies**, not originals. The source of truth is
 [`WorkLedger-API`](https://github.com/dante286/WorkLedger-API), at
-`src/WorkLedger.Contracts/`, as of commit **`3e6e955`** (the last commit to touch that project;
-repo `main` was at `1654a65`).
+`src/WorkLedger.Contracts/`, as of commit **`2065662`** (the last commit to touch that project;
+repo `main` was at `ced79aa`).
+
+Re-vendored 2026-08-19 from the previous pin (`3e6e955`) — WL-100. The only shape change since then was
+`SyncItemResult.AuthoritativeOperation` (WL-98) — see "What the server tells us on a rejection" below.
+`ReportDtos.cs` is deliberately **not** vendored: the client computes its own local reports and never
+calls `/reports/*`.
 
 ## Why they're copied
 
@@ -24,6 +29,28 @@ was rejected — this repo's CI checks out only this repo, so it would build loc
   directives (this project doesn't enable `ImplicitUsings`) and a provenance header.
 - `Tests/WorkLedger.Tests/SyncContractGuardTests.cs` asserts these still line up with the client's
   own constants and payload shapes, so a rename on either side fails the build rather than the sync.
+
+## What the server tells us on a rejection
+
+`SyncItemResult` carries three fields that only mean something together, and the combination is how a
+rejection is classified:
+
+| `Accepted` | `AuthoritativePayloadJson` | Meaning |
+|---|---|---|
+| `true` | null | Applied, or accepted as a replay/self-echo the server chose not to write. |
+| `false` | **set** | The server's own row won. The payload is the winner, and `AuthoritativeOperation` says what it *is* — `"update"` for a live row, `"delete"` for a tombstone. |
+| `false` | null | Validation failure. `Reason` says why. |
+
+`AuthoritativeOperation` (WL-98) exists because the payload alone is not self-describing. Adopting a
+tombstone's payload as an "update" resurrects a deleted entity locally and permanently, and no later
+incremental pull corrects it — a losing push performs no server-side write, so the winner's
+`UpdatedAt` is already behind the client's cursor.
+
+`ApiSyncProvider` does not read the field yet: it still answers a server-wins rejection by setting
+`SyncResult.RequiresFullPull`, which rewinds the cursor so the next pull re-delivers the row and
+states its operation explicitly. That is correct but expensive — it re-pulls the account's history on
+every server-wins conflict. Consuming `AuthoritativeOperation` directly is the cheaper path and is
+tracked as **WL-101**; the field was vendored ahead of needing it for that reason.
 
 ## Replacing this folder with the real package
 
