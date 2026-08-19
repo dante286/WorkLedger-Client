@@ -49,6 +49,7 @@ Reconciling this repo against the server's S3 plan surfaced four cross-repo gaps
 | WL-92 | Pull cursor is the client clock and resets to `MinValue` each launch | Its own ticket, or folded into Plan 7 item 2 |
 | WL-93 | Deletes are queued without a version bump, so no peer ever applies them (a live bug in file-based sync today) | Its own ticket; **blocks Plan 6** |
 | WL-94 | Push acks key differently on each side — map results positionally | Scoped inside Plan 6 |
+| WL-102 | Week boundaries disagree: the client's weekly total starts the week on **Sunday** (`MainWindowViewModel.cs:345`), the server's `/reports/weekly` on **Monday** (ISO-8601). Same account, different seven-day range | Scoped inside Plan 7 (Reports UI) — adopt the server's ISO Monday rule |
 
 **Rule of thumb:** the reconciliation rules live in `WorkLedger-API/plans/S3-sync-endpoints.md`, and Plan 6
 restates the client-facing half of them. If either copy changes, change both in the same breath — and never

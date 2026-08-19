@@ -62,8 +62,21 @@ methods (`GetProjectsAsync`, `GetTasksByProjectIdAsync`, `GetTimeEntriesByTaskId
 forward ahead of the sync work if reporting matters more for the next release. There's already a working
 weekly-total calculation to generalize from: `MainWindowViewModel`'s task-loading method computes a
 per-selected-project weekly total by summing `TimeEntry.DurationSeconds` for entries with `StartTime` on/after
-`DateTime.UtcNow.Date.AddDays(-(int)DateTime.UtcNow.DayOfWeek)` (`ViewModels/MainWindowViewModel.cs:333-356`)
-— reuse that same week-boundary logic for consistency rather than redefining "this week" a second way.
+`DateTime.UtcNow.Date.AddDays(-(int)DateTime.UtcNow.DayOfWeek)` (`ViewModels/MainWindowViewModel.cs:333-356`).
+
+> **Week boundary — fix this before generalizing it (WL-102, cross-repo mismatch).** That existing expression starts
+> the week on **Sunday** (`DayOfWeek` numbers Sunday as 0, so it subtracts nothing on a Sunday). The server
+> disagrees: `/reports/weekly` uses **ISO-8601 weeks, Monday–Sunday**, via
+> `date.AddDays(-(((int)date.DayOfWeek + 6) % 7))` (`WorkLedger-API`, `src/WorkLedger.Server/Reports/ReportRange.cs:49`).
+> Left alone, the client's "this week" and the server's authoritative cross-device weekly rollup cover
+> different seven-day ranges and report different totals for the same account — most visibly on a Sunday,
+> where the client starts a fresh week and the server is still closing the previous one.
+>
+> **Adopt the server's rule: ISO weeks starting Monday.** Correct the existing header calculation rather than
+> writing a second one alongside it, then have the Reports tab share the corrected helper — the "one
+> definition of this week" instruction still stands, it just has to be the *right* definition. Entry-level
+> counting already agrees on both sides (an entry lands wholly in the UTC day it *started*, and entries with
+> no `EndTime` are excluded from totals); the week start is the only divergence.
 
 ### Release
 
@@ -134,10 +147,15 @@ during this plan whether the constant needs manual updating or should be added t
    convention of "one big god-viewmodel" — per `CLAUDE.md`'s architecture notes — is intentionally being kept;
    default to extending `MainWindowViewModel` for consistency with the existing pattern unless the user
    prefers to start splitting it out here).
+   - **Fix the week boundary first (WL-102)**, then share it. Replace `MainWindowViewModel.cs:335`'s Sunday-start
+     expression (`DateTime.UtcNow.Date.AddDays(-(int)DateTime.UtcNow.DayOfWeek)`) with the ISO Monday-start
+     rule the server uses — `date.AddDays(-(((int)date.DayOfWeek + 6) % 7))` — and put it in **one** place
+     (a `static DateTime StartOfIsoWeek(DateTime utcDate)` helper) that both the header total and the new
+     Reports view call. See the week-boundary note in the Context section above for why this is a
+     correctness fix and not a preference. Weeks run Monday 00:00 UTC through Sunday 23:59:59 UTC.
    - **This week's total per project**: iterate `GetProjectsAsync()`, and for each project's tasks
-     (`GetTasksByProjectIdAsync`), sum `TimeEntry.DurationSeconds` for entries within the current week —
-     reuse the exact week-boundary calculation from `MainWindowViewModel.cs:335`
-     (`DateTime.UtcNow.Date.AddDays(-(int)DateTime.UtcNow.DayOfWeek)`).
+     (`GetTasksByProjectIdAsync`), sum `TimeEntry.DurationSeconds` for entries within the current week, using
+     that shared helper.
    - **This week's total per task**: same data, broken down one level further (per-task rather than
      per-project rollup) for the currently selected project, or all projects — pick whichever matches how the
      Reports tab is meant to be scoped (README describes "total time per project" and "total time per task"
@@ -156,7 +174,10 @@ during this plan whether the constant needs manual updating or should be added t
    alongside.
 9. **Tests**: unit-test the report aggregation logic (given a set of projects/tasks/time entries, the
    per-project and per-task weekly sums are computed correctly) and the CSV export (given a computed summary,
-   the written CSV has the expected rows/columns) — both independent of the UI.
+   the written CSV has the expected rows/columns) — both independent of the UI. Cover the week boundary
+   explicitly, since that's the half most likely to regress: a Sunday resolves back to the *preceding*
+   Monday (the case the old expression got wrong), a Monday resolves to itself, and an entry started at
+   Sunday 23:59 UTC counts in the week that began six days earlier rather than the one starting the next day.
 
 ### Release
 10. Update `README.md`'s status section (`README.md:15-19`, the "🚧 In Progress" list currently naming "Sync
@@ -200,7 +221,10 @@ during this plan whether the constant needs manual updating or should be added t
   backup is triggered per the configured `PreMergeBackupMode` (WL-51).
 - Reports tab shows real weekly per-project and per-task totals sourced from `LocalDbService`, matching what
   manual calculation against the same data would produce, and can export those summaries to CSV (WL-50).
-- Report aggregation and CSV export logic both have passing unit tests.
+- **WL-102:** "This week" means the **ISO week starting Monday**, the same rule the server's `/reports/weekly` applies,
+  and is computed by a single shared helper — the header's weekly total and the Reports tab cannot disagree,
+  and neither can disagree with the server. The old Sunday-start expression is gone from the codebase.
+- Report aggregation and CSV export logic both have passing unit tests, including week-boundary cases.
 - README's status section accurately reflects the shipped state (no more "Sync engine (placeholder
   directory)" once it's real).
 - A Release Please-driven version bump PR is generated/merged reflecting the accumulated `feat:` commits from
@@ -211,6 +235,7 @@ during this plan whether the constant needs manual updating or should be added t
 ```
 feat(sync): add SyncMode setting and wire SyncOrchestrator into app startup and Settings UI
 feat(sync): trigger a safety backup before applying remote-wins merges
+fix(reports): start the week on Monday to match the server's ISO week rule (WL-102)
 feat(reports): replace Reports tab stub with weekly per-project/per-task summaries and CSV export
 docs: update README sync/reports status for v1.1.0
 ```
@@ -231,9 +256,12 @@ docs: update README sync/reports status for v1.1.0
 >
 > Separately, replace the Reports tab stub (`Views/MainWindow.axaml` around line 490) with a real weekly
 > summary view — total time per project and per task for the current week — using `LocalDbService`'s existing
-> query methods and the same week-boundary calculation already used for the header's weekly total
-> (`MainWindowViewModel.cs` around line 335), plus a CSV export action for those summaries. Add unit tests for
-> the report aggregation logic and the CSV export. Finally, once this and all prior sync plans are merged,
+> query methods, plus a CSV export action for those summaries. "This week" must mean the **ISO week starting
+> Monday**, matching the server's `/reports/weekly`: the header's existing weekly total
+> (`MainWindowViewModel.cs` around line 335) currently starts the week on Sunday, so correct it to
+> `date.AddDays(-(((int)date.DayOfWeek + 6) % 7))`, extract it as one shared helper, and have both the header
+> and the Reports tab use it. Add unit tests for the report aggregation logic, the week boundary, and the CSV
+> export. Finally, once this and all prior sync plans are merged,
 > update README's status section to reflect that sync (file-based live, API-based ready-but-unconnected) and
 > reporting (with export) are implemented, and confirm the Release Please-driven version bump reflects the
 > accumulated `feat:` commits.

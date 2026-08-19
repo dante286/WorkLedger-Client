@@ -114,7 +114,8 @@ Two further items were found while building this and deliberately left out of sc
   `UpdateAsync` helpers rather than `SaveTimeEntryAsync`, so timer-produced entries get no `SyncQueue` row at
   all, no version stamping, and no parent-SyncId resolution. That is the app's primary time-entry path, so
   end-to-end API sync can't be demonstrated with timed work until it lands. Plan 03's boundary, not this one's.
-- **WL-98** — the tombstone ambiguity in `SyncItemResult` described under Scope 4.
+- **WL-98** — the tombstone ambiguity in `SyncItemResult` described under Scope 4. Since shipped
+  server-side and vendored (WL-100); consuming it client-side is **WL-101** (see the update under Scope 4).
 
 ## Scope
 
@@ -129,7 +130,8 @@ Two further items were found while building this and deliberately left out of sc
    workflow is `build.yml`, so there is nothing to reference; a cross-repo `ProjectReference` would build
    locally and fail CI, which checks out only this repo. The files live under `Sync/Contracts/` with upstream
    namespaces intact (so swapping in a real `PackageReference` later is a delete plus one line) and a header
-   naming source commit `3e6e955`. See `Sync/Contracts/README.md`.
+   naming the source commit — originally `3e6e955`, re-vendored to `2065662` under WL-100. See
+   `Sync/Contracts/README.md`.
 
 2. **Settings** (`Services/SettingsService.cs`, following the `BackupDirectory`/`SyncFolderPath`
    empty-string-default + backfill pattern):
@@ -173,6 +175,13 @@ Two further items were found while building this and deliberately left out of sc
      pull is not enough on its own: a losing item performs no server-side write by design, so the winner's
      `UpdatedAt` is already behind the cursor. Filed as **WL-98** to add an `AuthoritativeOperation` to the
      Contracts DTO and drop the rewind.
+
+     > **Update (2026-08-19):** WL-98's server half has shipped — `SyncItemResult.AuthoritativeOperation`
+     > (`"update"` / `"delete"`, null when there is no payload) is live and now vendored here. The client
+     > half is still open as **WL-101**: `MapPushResults` does not read it, so the rewind is still what happens. Adopting
+     > the payload directly using that field is a self-contained follow-up, and
+     > `PushAsync_ServerWinsCarryingAnAuthoritativeOperation_StillRetiresAndRePulls` pins today's behaviour
+     > for both `"update"` and `"delete"` so the change has a starting point to move off.
    - `PullAsync(since)`: `GET {baseUrl}/sync/pull?since={since:o}`, map each `SyncChangeDto` → `RemoteChange`,
      and surface `ServerTime` for the cursor (WL-92).
    - **Failure handling remains the core requirement**: unreachable host, DNS failure, timeout, non-2xx,
