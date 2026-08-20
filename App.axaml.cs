@@ -65,7 +65,21 @@ namespace WorkLedger_Client
                 // Initialize toast service for transient messages
                 var toastService = new ToastService(desktop);
 
-                var mainViewModel = new MainWindowViewModel(localDb, timerService, appState, themeService, settingsService, toastService);
+                // PHASE 4: SYNC. Plan 7 item 4 - the first time SyncOrchestrator is
+                // constructed outside the test suite. SyncCoordinator owns it, picks the
+                // provider matching appSettings.SyncMode, and starts the background tick;
+                // with SyncMode = Off (the default) nothing runs and nothing is contacted.
+                //
+                // appSettings is deliberately the same instance the view model gets: the
+                // coordinator's SettingsSyncStore writes the issued API token and the pull
+                // cursor into it, and a second copy would mean whichever saved last silently
+                // discarded the other's fields.
+                var syncCoordinator = new SyncCoordinator(localDb, settingsService, appSettings);
+                syncCoordinator.ApplyConfiguration();
+
+                var mainViewModel = new MainWindowViewModel(
+                    localDb, timerService, appState, themeService, settingsService, toastService,
+                    appSettings, syncCoordinator);
                 desktop.MainWindow = new MainWindow
                 {
                     DataContext = mainViewModel,
@@ -73,10 +87,18 @@ namespace WorkLedger_Client
 
                 // Ensure On-close backup runs (with a short timeout) before application exit,
                 // but only if the user has opted into backing up on close.
+                //
+                // There is deliberately no on-close *sync* flush to match (plan 7 item 4).
+                // SyncQueue is durable and survives the exit, so a skipped final push costs
+                // nothing but the wait until the next launch or tick - whereas a network
+                // round trip on the way out would stall closing the app on however long an
+                // unreachable server takes to time out. Nothing is lost by leaving it out.
                 desktop.Exit += async (s, e) =>
                 {
                     try
                     {
+                        syncCoordinator.Dispose();
+
                         if (mainViewModel.BackupOnClose && !string.IsNullOrWhiteSpace(mainViewModel.BackupDirectory))
                         {
                             await timerService.RunOnCloseBackupAsync(TimeSpan.FromSeconds(5));

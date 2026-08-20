@@ -24,6 +24,9 @@
         <converters:ActiveProjectMatchConverter x:Key="ActiveProjectMatchConverter" />
         <converters:BooleanToArchiveColorConverter x:Key="BooleanToArchiveColorConverter" />
         <converters:BackupIntervalToDisplayConverter x:Key="BackupIntervalToDisplayConverter" />
+        <converters:SyncModeToDisplayConverter x:Key="SyncModeToDisplayConverter" />
+        <converters:SyncIntervalToDisplayConverter x:Key="SyncIntervalToDisplayConverter" />
+        <converters:PreMergeBackupModeToDisplayConverter x:Key="PreMergeBackupModeToDisplayConverter" />
     </Window.Resources>
 
     <Grid>
@@ -497,7 +500,9 @@
 
         <TabItem Header="Settings">
             <Border Padding="{DynamicResource SpacingXXLargeThickness}">
-                <StackPanel Spacing="{DynamicResource SpacingXLarge}">
+                <!-- Scrollable since the Sync section: the tab is now taller than a small window. -->
+                <ScrollViewer>
+                    <StackPanel Spacing="{DynamicResource SpacingXLarge}">
                     <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
                         <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Theme</TextBlock>
                         <ComboBox Width="160" ItemsSource="{Binding ThemeOptions}" SelectedItem="{Binding SelectedTheme, Mode=TwoWay}" />
@@ -567,6 +572,103 @@
                         </CheckBox>
                     </StackPanel>
 
+                    <!-- Sync Settings -->
+                    <TextBlock Foreground="{DynamicResource TextPrimary}" FontWeight="600" FontSize="14" Margin="0,12,0,0">Sync</TextBlock>
+
+                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Sync Mode</TextBlock>
+                        <ComboBox Width="160" ItemsSource="{Binding SyncModeOptions}" SelectedItem="{Binding SyncMode, Mode=TwoWay}">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Converter={StaticResource SyncModeToDisplayConverter}}" />
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                        <Button Command="{Binding SyncNowCommand}" IsEnabled="{Binding !IsSyncing}" Margin="12,0,0,0"
+                                Background="{DynamicResource TealActive}" Foreground="White"
+                                FontSize="13" FontWeight="500" Padding="14,6" CornerRadius="7"
+                                VerticalAlignment="Center" BorderThickness="0">
+                            <Button.Styles>
+                                <Style Selector="Button:pointerover /template/ ContentPresenter">
+                                    <Setter Property="Background" Value="{DynamicResource TealGlow}" />
+                                </Style>
+                            </Button.Styles>
+                            <TextBlock Text="Sync Now" />
+                        </Button>
+                    </StackPanel>
+
+                    <!-- Folder sync: only relevant when the mode actually uses a folder. -->
+                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center"
+                                IsVisible="{Binding IsFileSyncSelected}">
+                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Sync Folder</TextBlock>
+                        <TextBox Width="280" Text="{Binding SyncFolderPath, Mode=TwoWay}" />
+                        <Button Margin="8,0,0,0" Command="{Binding PickSyncFolderCommand}"
+                                Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
+                                FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
+                                VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
+                            <TextBlock Text="Pick Folder" />
+                        </Button>
+                    </StackPanel>
+
+                    <!-- API sync: endpoint, then a one-off device registration against it. -->
+                    <StackPanel Spacing="{DynamicResource SpacingLarge}" IsVisible="{Binding IsApiSyncSelected}">
+                        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                            <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">API Endpoint</TextBlock>
+                            <TextBox Width="320" Text="{Binding ApiEndpoint, Mode=TwoWay}" Watermark="https://workledger.example.com" />
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                            <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Bootstrap Secret</TextBlock>
+                            <TextBox Width="240" PasswordChar="•" Text="{Binding BootstrapSecret, Mode=TwoWay}" />
+                            <Button Margin="8,0,0,0" Command="{Binding RegisterDeviceCommand}"
+                                    Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
+                                    FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
+                                    VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
+                                <TextBlock Text="Register this device" />
+                            </Button>
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                            <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Device</TextBlock>
+                            <TextBlock VerticalAlignment="Center" Text="{Binding DeviceId}" FontFamily="{DynamicResource FontMono}" FontSize="12" />
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                            <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Status</TextBlock>
+                            <TextBlock VerticalAlignment="Center" Text="{Binding ApiTokenStatus}" FontSize="12" />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center"
+                                IsVisible="{Binding IsSyncConfigured}">
+                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Sync Interval</TextBlock>
+                        <ComboBox Width="160" ItemsSource="{Binding SyncIntervalOptions}" SelectedItem="{Binding SyncInterval, Mode=TwoWay}">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Converter={StaticResource SyncIntervalToDisplayConverter}}" />
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center"
+                                IsVisible="{Binding IsSyncConfigured}">
+                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Backup Before Merge</TextBlock>
+                        <ComboBox Width="160" ItemsSource="{Binding PreMergeBackupModeOptions}" SelectedItem="{Binding PreMergeBackupMode, Mode=TwoWay}">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Converter={StaticResource PreMergeBackupModeToDisplayConverter}}" />
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextTertiary}" FontSize="12">Copies the database into pre-merge-backups before a remote change overwrites local data</TextBlock>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Last Synced</TextBlock>
+                        <TextBlock VerticalAlignment="Center" Text="{Binding LastSyncedDisplay}" />
+                    </StackPanel>
+
                     <!-- Restore Settings -->
                     <TextBlock Foreground="{DynamicResource TextPrimary}" FontWeight="600" FontSize="14" Margin="0,12,0,0">Restore</TextBlock>
 
@@ -584,7 +686,8 @@
                         </Button>
                         <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextTertiary}" FontSize="12">Select folder with settings.json and workledger.db</TextBlock>
                     </StackPanel>
-                </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
             </Border>
         </TabItem>
     </TabControl>
