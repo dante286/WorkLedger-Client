@@ -81,6 +81,7 @@ namespace WorkLedger_Client.ViewModels
         private readonly ThemeService _themeService;
         private readonly ToastService? _toastService;
         private readonly SyncCoordinator _syncCoordinator;
+        private readonly ReportsService _reportsService;
 
         // WL-67/WL-95: the single live AppSettings instance, shared with SyncCoordinator and
         // through it with SettingsSyncStore. Every save mutates and re-persists *this* object
@@ -148,6 +149,7 @@ namespace WorkLedger_Client.ViewModels
             _toastService = toastService;
             _settings = settings;
             _syncCoordinator = syncCoordinator;
+            _reportsService = new ReportsService(localDbService);
 
             SelectedTheme = string.IsNullOrWhiteSpace(settings.Theme) ? "System" : settings.Theme;
             DataDirectory = settings.DataDirectory ?? string.Empty;
@@ -195,6 +197,7 @@ namespace WorkLedger_Client.ViewModels
             };
 
             LoadProjects();
+            _ = LoadWeeklyReportAsync();
         }
 
         // Copies the bound settings values onto the live AppSettings instance and persists it.

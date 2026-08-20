@@ -492,9 +492,87 @@
 
         <TabItem Header="Reports">
             <Border Padding="{DynamicResource SpacingXXLargeThickness}">
-                <StackPanel Spacing="{DynamicResource SpacingXLarge}">
-                    <TextBlock Margin="0 5" xml:space="preserve" Foreground="{DynamicResource TextSecondary}" FontSize="13">This feature will be implemented in a future release</TextBlock>
-                </StackPanel>
+                <Grid RowDefinitions="Auto,Auto,*">
+
+                    <!-- Week header: which week this is, what it adds up to, and the actions. -->
+                    <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0" Spacing="4">
+                            <TextBlock Text="{Binding WeeklyReport.WeekRangeLabel}"
+                                       FontFamily="{DynamicResource FontDisplay}" FontSize="16" FontWeight="700"
+                                       Foreground="{DynamicResource TextPrimary}" />
+                            <TextBlock Foreground="{DynamicResource TextTertiary}" FontSize="12"
+                                       Text="Weeks run Monday to Sunday in UTC, matching the server's weekly rollup" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                            <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" FontSize="12">Total</TextBlock>
+                            <TextBlock VerticalAlignment="Center" Text="{Binding WeeklyReport.TotalDuration}"
+                                       FontFamily="{DynamicResource FontMono}" FontSize="15" FontWeight="700"
+                                       Foreground="{DynamicResource TealActive}" />
+
+                            <Button Command="{Binding RefreshReportCommand}" IsEnabled="{Binding !IsBuildingReport}"
+                                    Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
+                                    FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
+                                    VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
+                                <TextBlock Text="Refresh" />
+                            </Button>
+
+                            <Button Command="{Binding ExportReportCsvCommand}"
+                                    Background="{DynamicResource TealActive}" Foreground="White"
+                                    FontSize="13" FontWeight="500" Padding="14,6" CornerRadius="7"
+                                    VerticalAlignment="Center" BorderThickness="0">
+                                <Button.Styles>
+                                    <Style Selector="Button:pointerover /template/ ContentPresenter">
+                                        <Setter Property="Background" Value="{DynamicResource TealGlow}" />
+                                    </Style>
+                                </Button.Styles>
+                                <TextBlock Text="Export CSV" />
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+
+                    <TextBlock Grid.Row="1" Margin="0,24,0,0" IsVisible="{Binding WeeklyReport.IsEmpty}"
+                               Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                               Text="No completed time entries this week yet. Start a timer on a task and it will show up here." />
+
+                    <ScrollViewer Grid.Row="2" Margin="0,20,0,0">
+                        <ItemsControl ItemsSource="{Binding WeeklyReport.Projects}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="models:ProjectReportRow">
+                                    <Border Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Border}"
+                                            BorderThickness="1" CornerRadius="8" Padding="14,12" Margin="0,0,0,10">
+                                        <StackPanel Spacing="8">
+                                            <Grid ColumnDefinitions="*,Auto">
+                                                <TextBlock Grid.Column="0" Text="{Binding ProjectName}"
+                                                           FontWeight="600" FontSize="14"
+                                                           Foreground="{DynamicResource TextPrimary}" />
+                                                <TextBlock Grid.Column="1" Text="{Binding Duration}"
+                                                           FontFamily="{DynamicResource FontMono}" FontSize="13" FontWeight="600"
+                                                           Foreground="{DynamicResource TextPrimary}" />
+                                            </Grid>
+
+                                            <!-- One level further down: the same week, per task. -->
+                                            <ItemsControl ItemsSource="{Binding Tasks}" Margin="12,0,0,0">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate x:DataType="models:TaskReportRow">
+                                                        <Grid ColumnDefinitions="*,Auto" Margin="0,3">
+                                                            <TextBlock Grid.Column="0" Text="{Binding TaskName}"
+                                                                       FontSize="13"
+                                                                       Foreground="{DynamicResource TextSecondary}" />
+                                                            <TextBlock Grid.Column="1" Text="{Binding Duration}"
+                                                                       FontFamily="{DynamicResource FontMono}" FontSize="12"
+                                                                       Foreground="{DynamicResource TextSecondary}" />
+                                                        </Grid>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </Grid>
             </Border>
         </TabItem>
 

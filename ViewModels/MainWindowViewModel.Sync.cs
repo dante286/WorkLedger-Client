@@ -165,6 +165,7 @@ namespace WorkLedger_Client.ViewModels
             {
                 LoadProjects();
                 await LoadTasksAsync();
+                await LoadWeeklyReportAsync();
             }
             catch (Exception ex)
             {
