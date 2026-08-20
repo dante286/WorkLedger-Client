@@ -133,6 +133,19 @@ namespace WorkLedger.Tests
                 Reason = reason
             };
 
+        // The same result with WL-98's AuthoritativeOperation attached, as the live server sends it.
+        private static object ItemResultWithOperation(
+            Guid entityId, bool accepted, int version, string? payload, string? reason, string? operation)
+            => new
+            {
+                EntityId = entityId,
+                Accepted = accepted,
+                AuthoritativeVersion = version,
+                AuthoritativePayloadJson = payload,
+                Reason = reason,
+                AuthoritativeOperation = operation
+            };
+
         [Fact]
         public async Task PushAsync_SendsTheExpectedRequest_AndAcceptsTheServersResults()
         {
@@ -239,9 +252,9 @@ namespace WorkLedger.Tests
             Assert.Empty(result.Failures);
         }
 
-        // A rejection carrying an authoritative payload means the server's row won. The
-        // payload can't be adopted directly (WL-98 - no way to tell a tombstone from a live
-        // row), so the provider asks for a full re-pull instead.
+        // A rejection carrying an authoritative payload means the server's row won. The provider
+        // asks for a full re-pull rather than adopting the payload; WL-98's AuthoritativeOperation
+        // would make direct adoption safe, but it isn't consumed yet - see SyncResult.RequiresFullPull.
         [Fact]
         public async Task PushAsync_WhenTheServerWinsAConflict_RetiresTheRowAndRequestsAFullPull()
         {
@@ -254,6 +267,30 @@ namespace WorkLedger.Tests
 
             Assert.Empty(result.AcceptedSyncQueueIds);
             Assert.Equal(new[] { 40 }, result.RejectedSyncQueueIds);
+            Assert.True(result.RequiresFullPull);
+        }
+
+        // The live server sends AuthoritativeOperation on every server-wins rejection. It is now
+        // part of the vendored contract but not yet consumed, so what matters here is that its
+        // presence changes nothing: the row is still retired and a re-pull still requested, whether
+        // the winner is a live row or a tombstone. Both cases, because "delete" is the one this
+        // provider must never quietly treat as an update.
+        [Theory]
+        [InlineData("update")]
+        [InlineData("delete")]
+        public async Task PushAsync_ServerWinsCarryingAnAuthoritativeOperation_StillRetiresAndRePulls(string operation)
+        {
+            var entityId = Guid.NewGuid();
+            var handler = new RecordingHandler().EnqueueJson(HttpStatusCode.OK, PushResponse(
+                ItemResultWithOperation(
+                    entityId, accepted: false, version: 9, payload: "{\"Version\":9}",
+                    reason: "Server version wins.", operation: operation)));
+            var provider = CreateProvider(handler);
+
+            var result = await provider.PushAsync(new[] { QueueEntry(41, "project", entityId, "update", 4) });
+
+            Assert.Empty(result.AcceptedSyncQueueIds);
+            Assert.Equal(new[] { 41 }, result.RejectedSyncQueueIds);
             Assert.True(result.RequiresFullPull);
         }
 

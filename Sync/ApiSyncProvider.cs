@@ -268,9 +268,11 @@ namespace WorkLedger_Client.Sync
                 });
 
                 // An authoritative payload is how the server distinguishes "my row won" from
-                // "your payload was invalid" - it only fills one in for the former. See the
-                // note on SyncResult.RequiresFullPull for why we ask for a re-pull instead of
-                // adopting this payload directly.
+                // "your payload was invalid" - it only fills one in for the former.
+                //
+                // result.AuthoritativeOperation (WL-98) names what that payload is - "update"
+                // or "delete" - which is everything needed to adopt it here and skip the
+                // re-pull. Deliberately not read yet - that is WL-101; see SyncResult.RequiresFullPull.
                 if (!string.IsNullOrEmpty(result.AuthoritativePayloadJson))
                     serverWon = true;
             }

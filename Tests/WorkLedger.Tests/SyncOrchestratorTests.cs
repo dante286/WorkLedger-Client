@@ -165,7 +165,13 @@ namespace WorkLedger.Tests
             var stored = await _db.GetProjectByIdAsync(project.Id);
             Assert.NotNull(stored);
             Assert.Equal("Remote Name", stored!.Name);
-            Assert.True(stored.Version > 5);
+
+            // The merged row keeps the *author's* version and device, verbatim. This assertion used
+            // to read `Version > 5`, which quietly accepted the merge being written through
+            // SaveProjectAsync: that bumped to 6, restamped this device as the author, and queued
+            // the change straight back out - see RunSyncAsync_MergingARemoteChange_DoesNotReQueueOrRestampIt.
+            Assert.Equal(5, stored.Version);
+            Assert.Equal(RemoteDeviceId, stored.OriginDeviceId);
         }
 
         [Fact]
@@ -597,9 +603,9 @@ namespace WorkLedger.Tests
                 var relinked = Assert.Single(await _db.GetAllAsync<TaskItem>());
                 Assert.Equal(versionWhileOrphaned, relinked.Version);
 
-                // Counted rather than checking ReceivedPush: merging the task in the first
-                // sync already queued a row of its own, which the second sync legitimately
-                // pushes. What must not happen is the re-link adding another one.
+                // Counted rather than asserted at zero so this stays a statement about the
+                // re-link specifically: whatever merging the task did or didn't queue, the
+                // re-link must not add to it.
                 var queuedTaskRowsAfter = (await _db.GetAllAsync<SyncQueue>()).Count(q => q.EntityType == "task");
                 Assert.Equal(queuedTaskRowsBefore, queuedTaskRowsAfter);
             }
@@ -609,5 +615,100 @@ namespace WorkLedger.Tests
                 TryDeleteWithRetries(dbPathB);
             }
         }
+
+        // Applying a remote change is not a local edit. Written through SaveXAsync it was all
+        // three: a version bump, a change of author, and a queued row heading back out.
+        [Fact]
+        public async Task RunSyncAsync_MergingARemoteChange_DoesNotReQueueOrRestampIt()
+        {
+            var remoteProject = new Project { SyncId = Guid.NewGuid(), Name = "From the peer", Version = 4 };
+            _provider.RemoteChanges.Add(new RemoteChange
+            {
+                EntityType = "project",
+                EntityId = remoteProject.SyncId,
+                Operation = "update",
+                PayloadJson = ToPayload(remoteProject),
+                Version = 4,
+                OriginDeviceId = RemoteDeviceId
+            });
+
+            await _orchestrator.RunSyncAsync();
+
+            var stored = Assert.Single(await _db.GetAllAsync<Project>());
+            Assert.Equal(4, stored.Version);
+            Assert.Equal(RemoteDeviceId, stored.OriginDeviceId);
+            Assert.Empty(await _db.GetAllAsync<SyncQueue>());
+            Assert.Empty(_provider.ReceivedPush);
+        }
+
+        // The regression that motivated the fix. Two devices, one edit, then nothing but sync:
+        // each merge used to re-broadcast the row one version higher, so the peer merged the echo,
+        // bumped again, and the pair traded ever-higher versions of an unchanged row forever -
+        // a push and a pull per round, indefinitely. Measured behaviour was v2 -> 3 -> 4 -> 5 -> 6.
+        [Fact]
+        public async Task RunSyncAsync_TwoDevicesRelayingOneEdit_ConvergeInsteadOfTradingVersions()
+        {
+            var dbPathB = Path.Combine(Path.GetTempPath(), $"WorkLedgerSyncTests_{Guid.NewGuid()}.db");
+            var dbB = new LocalDbService(dbPathB, RemoteDeviceId);
+            await dbB.Initialization;
+            try
+            {
+                var providerB = new FakeSyncProvider();
+                var orchestratorB = new SyncOrchestrator(dbB, providerB);
+
+                // B authors a project and A merges it, leaving both devices holding the row.
+                var projectB = new Project { Name = "Shared" };
+                await dbB.SaveProjectAsync(projectB);
+                _provider.RemoteChanges.AddRange(await ToRemoteChangesAsync(dbB));
+                await _orchestrator.RunSyncAsync();
+                await dbB.Connection.DeleteAllAsync<SyncQueue>();
+
+                // B edits it once. Nothing else is authored from here on.
+                projectB.Name = "Edited by B";
+                await dbB.SaveProjectAsync(projectB);
+                Assert.Equal(2, projectB.Version);
+
+                for (var round = 0; round < 4; round++)
+                {
+                    // Each side's queue becomes the other's inbound changes, as a real transport
+                    // would relay them.
+                    var bToA = await ToRemoteChangesAsync(dbB);
+                    var aToB = await ToRemoteChangesAsync(_db);
+
+                    _provider.RemoteChanges.Clear();
+                    _provider.RemoteChanges.AddRange(bToA);
+                    providerB.RemoteChanges.Clear();
+                    providerB.RemoteChanges.AddRange(aToB);
+
+                    _provider.PushResult = AcceptAll(await _db.GetAllAsync<SyncQueue>());
+                    providerB.PushResult = AcceptAll(await dbB.GetAllAsync<SyncQueue>());
+
+                    await _orchestrator.RunSyncAsync();
+                    await orchestratorB.RunSyncAsync();
+                }
+
+                var onA = Assert.Single(await _db.GetAllAsync<Project>());
+                var onB = Assert.Single(await dbB.GetAllAsync<Project>());
+
+                // Both devices settle on B's edit, at B's version, crediting B.
+                Assert.Equal("Edited by B", onA.Name);
+                Assert.Equal("Edited by B", onB.Name);
+                Assert.Equal(2, onA.Version);
+                Assert.Equal(2, onB.Version);
+                Assert.Equal(RemoteDeviceId, onA.OriginDeviceId);
+
+                // And the exchange is over: neither side is still generating work.
+                Assert.Empty(await _db.GetAllAsync<SyncQueue>());
+                Assert.Empty(await dbB.GetAllAsync<SyncQueue>());
+            }
+            finally
+            {
+                await dbB.Connection.CloseAsync();
+                TryDeleteWithRetries(dbPathB);
+            }
+        }
+
+        private static SyncResult AcceptAll(List<SyncQueue> queued)
+            => new() { AcceptedSyncQueueIds = queued.Select(q => q.Id).ToList() };
     }
 }

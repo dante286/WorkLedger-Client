@@ -1,4 +1,4 @@
-// Vendored verbatim from WorkLedger-API, src/WorkLedger.Contracts/Auth/AuthDtos.cs @ 3e6e955.
+// Vendored verbatim from WorkLedger-API, src/WorkLedger.Contracts/Auth/AuthDtos.cs @ 2065662.
 // The server is the source of truth for these shapes - see Sync/Contracts/README.md before editing.
 using System;
 

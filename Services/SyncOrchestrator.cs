@@ -26,9 +26,14 @@ namespace WorkLedger_Client.Services
     // the local [PrimaryKey, AutoIncrement] Id. Two independently-offline devices can
     // land unrelated entities on the same local Id; SyncId is generated once at creation
     // and never reassigned, so it's the only value stable across devices. When a
-    // RemoteChange's SyncId has no local match, the incoming entity's Id is left at 0 so
-    // SaveXAsync inserts a new row (getting its own fresh local Id) rather than updating
-    // one that doesn't exist.
+    // RemoteChange's SyncId has no local match, the incoming entity's Id is left at 0 and the
+    // row is inserted (getting its own fresh local Id) rather than updated.
+    //
+    // WL-99. Merging is not editing: an applied remote change keeps the author's Version and
+    // OriginDeviceId and enqueues nothing. It is written through the raw generic
+    // Insert/Update/Delete helpers rather than LocalDbService's SaveXAsync/DeleteXAsync, which
+    // are the local-edit path and would bump the version, claim authorship, and queue the change
+    // straight back out. See WriteMergedAsync for what that cost.
     //
     // Parent links (WL-91): the same argument applies one level down, to TaskItem.ProjectId
     // and TimeEntry.TaskItemId. Those ints are the authoring device's and are always
@@ -188,15 +193,14 @@ namespace WorkLedger_Client.Services
             if (change.Operation == LocalDbService.SyncOperations.Delete)
             {
                 if (local != null)
-                    await _db.DeleteProjectAsync(local);
+                    await _db.DeleteAsync(local);
                 return;
             }
 
             var incoming = DeserializePayload<Project>(change.PayloadJson) ?? local ?? new Project();
             incoming.Id = local?.Id ?? 0;
-            incoming.SyncId = change.EntityId;
-            incoming.Version = change.Version;
-            await _db.SaveProjectAsync(incoming);
+            StampFromRemote(incoming, change);
+            await WriteMergedAsync(incoming, isInsert: local is null);
         }
 
         private async Task ApplyTaskChangeAsync(RemoteChange change)
@@ -208,21 +212,20 @@ namespace WorkLedger_Client.Services
             if (change.Operation == LocalDbService.SyncOperations.Delete)
             {
                 if (local != null)
-                    await _db.DeleteTaskAsync(local);
+                    await _db.DeleteAsync(local);
                 return;
             }
 
             var incoming = DeserializePayload<TaskItem>(change.PayloadJson) ?? local ?? new TaskItem();
             incoming.Id = local?.Id ?? 0;
-            incoming.SyncId = change.EntityId;
-            incoming.Version = change.Version;
+            StampFromRemote(incoming, change);
 
             // WL-91: ProjectId as received is the *authoring* device's local autoincrement
             // value and means nothing here, so it is always overwritten - never merged
             // through. ProjectSyncId is the half that travels; 0 marks an orphan for
             // RelinkOrphanedChildrenAsync to pick up once the project arrives.
             incoming.ProjectId = await ResolveLocalProjectIdAsync(incoming.ProjectSyncId);
-            await _db.SaveTaskAsync(incoming);
+            await WriteMergedAsync(incoming, isInsert: local is null);
         }
 
         private async Task ApplyTimeEntryChangeAsync(RemoteChange change)
@@ -234,19 +237,49 @@ namespace WorkLedger_Client.Services
             if (change.Operation == LocalDbService.SyncOperations.Delete)
             {
                 if (local != null)
-                    await _db.DeleteTimeEntryAsync(local);
+                    await _db.DeleteAsync(local);
                 return;
             }
 
             var incoming = DeserializePayload<TimeEntry>(change.PayloadJson) ?? local ?? new TimeEntry();
             incoming.Id = local?.Id ?? 0;
-            incoming.SyncId = change.EntityId;
-            incoming.Version = change.Version;
+            StampFromRemote(incoming, change);
 
             // WL-91: see the note in ApplyTaskChangeAsync - same rule one level down.
             incoming.TaskItemId = await ResolveLocalTaskIdAsync(incoming.TaskSyncId);
-            await _db.SaveTimeEntryAsync(incoming);
+            await WriteMergedAsync(incoming, isInsert: local is null);
         }
+
+        // WL-99: carries the change's own identity and versioning onto the row about to be written.
+        //
+        // Version and OriginDeviceId are the *authoring* device's and are kept verbatim. That is
+        // what makes the merge idempotent: the next copy of this same change arrives at the same
+        // Version, loses the RemoteWins comparison, and is discarded. Re-stamping either one makes
+        // the local copy look like a newer, locally-authored edit instead.
+        private static void StampFromRemote(IVersionedEntity incoming, RemoteChange change)
+        {
+            incoming.SyncId = change.EntityId;
+            incoming.Version = change.Version;
+
+            // Only overwrite when the change actually names an author - a provider that couldn't
+            // lift OriginDeviceId out of the payload sends null/empty, and the payload's own value
+            // (already deserialized onto `incoming`) is the better answer than blanking it.
+            if (!string.IsNullOrEmpty(change.OriginDeviceId))
+                incoming.OriginDeviceId = change.OriginDeviceId;
+        }
+
+        // WL-99: applies a merged row through the raw generic helpers, never SaveXAsync/DeleteXAsync.
+        //
+        // Those exist to record a *local* edit: they bump Version, restamp OriginDeviceId to this
+        // device, and enqueue a SyncQueue row. None of that is right for a change another device
+        // authored and already broadcast. Routing a merge through them re-announced every incoming
+        // change as a fresh local edit one version higher - so the echo beat the original, the peer
+        // merged it and bumped again, and two idle devices traded ever-higher versions of an
+        // unchanged row indefinitely, each round costing a push and a pull.
+        //
+        // Same rule, same mechanism as RelinkOrphanedChildrenAsync below.
+        private Task<int> WriteMergedAsync<T>(T incoming, bool isInsert) where T : new()
+            => isInsert ? _db.InsertAsync(incoming) : _db.UpdateAsync(incoming);
 
         // Map a cross-device parent SyncId to whatever local autoincrement Id that parent
         // happens to hold on this device. 0 - the value an unset foreign key already has -
