@@ -340,10 +340,16 @@ namespace WorkLedger_Client.ViewModels
             Tasks.Clear();
             TaskCount = tasks.Count;
             
-            // Calculate weekly total
+            // Calculate weekly total.
+            //
+            // WL-102: "this week" is the ISO week starting Monday, computed by the same helper
+            // the Reports tab uses - which is also the rule the server's /reports/weekly
+            // applies. This used to subtract (int)DayOfWeek, which numbers Sunday as 0 and so
+            // started a new week every Sunday, one day ahead of the server.
             long weeklySeconds = 0;
-            var weekStart = DateTime.UtcNow.Date.AddDays(-(int)DateTime.UtcNow.DayOfWeek);
-            
+            var weekStart = ReportsService.StartOfIsoWeek(DateTime.UtcNow);
+            var weekEnd = weekStart.AddDays(7);
+
             foreach (var task in tasks)
             {
                 // Skip archived tasks if not showing them
@@ -357,13 +363,15 @@ namespace WorkLedger_Client.ViewModels
                 var entries = await _localDbService.GetTimeEntriesByTaskIdAsync(task.Id);
                 foreach (var entry in entries)
                 {
-                    if (entry.EndTime != null && entry.StartTime >= weekStart)
+                    if (entry.EndTime != null && entry.StartTime >= weekStart && entry.StartTime < weekEnd)
                     {
                         weeklySeconds += entry.DurationSeconds ?? 0;
                     }
                 }
             }
-            WeeklyTotal = TimeSpan.FromSeconds(weeklySeconds).ToString(@"hh\:mm\:ss");
+            // Shared with the Reports tab so a week over 24 hours reads as e.g. 41:12:00
+            // rather than silently wrapping the way TimeSpan's "hh" specifier does.
+            WeeklyTotal = ReportDuration.Format(weeklySeconds);
         }
 
         public async Task LoadTimeEntriesAsync(TaskItemViewModel taskViewModel)
