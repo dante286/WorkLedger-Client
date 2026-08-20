@@ -1,0 +1,26 @@
+name: Release Please
+
+# Opens/updates a release PR from the Conventional Commits on main, and on merge tags the
+# release. The v* tag is what package.yml waits for, which in turn feeds release.yml - so this
+# is the head of the release chain rather than a separate flow.
+#
+# WorkLedger-Client.csproj has listed this file under Content since the pipeline was set up;
+# it was the one piece of it never actually committed, which is why no automated version bump
+# had ever run.
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: release-please-manifest.json

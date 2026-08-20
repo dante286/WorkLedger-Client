@@ -8,7 +8,10 @@ namespace WorkLedger_Client.Services
 {
     public class AppSettings
     {
-        public const string CurrentApplicationVersion = "1.0.4";
+        // Kept in step with the tagged release by Release Please - the trailing annotation is
+        // what its generic updater looks for, and release-please-config.json lists this file
+        // under extra-files. Don't hand-edit it outside of a deliberate versioning reset.
+        public const string CurrentApplicationVersion = "0.1.0"; // x-release-please-version
 
         public string Theme { get; set; } = "System"; // "System", "Light", "Dark"
         public string DataDirectory { get; set; } = string.Empty;
@@ -198,7 +201,12 @@ namespace WorkLedger_Client.Services
                     SaveSettings(settings);
                 }
 
-                if (string.IsNullOrWhiteSpace(settings.ApplicationVersion))
+                // Records which build last wrote this file, so it follows the running version
+                // rather than only being filled in when absent. Left as a backfill-on-blank it
+                // would pin the display to whatever version first created the file - which is
+                // how a settings.json written by a v1.0.4 build kept reporting 1.0.4 after the
+                // reset to the 0.1.x line.
+                if (settings.ApplicationVersion != AppSettings.CurrentApplicationVersion)
                 {
                     settings.ApplicationVersion = AppSettings.CurrentApplicationVersion;
                     SaveSettings(settings);

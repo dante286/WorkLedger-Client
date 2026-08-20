@@ -1,5 +1,18 @@
 # Changelog
 
+<!-- Release Please inserts each new version directly below this line. -->
+
+---
+
+## Superseded pre-release tags
+
+WorkLedger's first real release is **v0.1.0**, versioned in step with WorkLedger-API's own
+first release. The `v1.0.0`-`v1.0.4` tags below predate that reset: they were CI and packaging
+experiments cut while the release pipeline was being set up, before any of the sync work
+existed, and their version numbers never described a shipped feature set. They are kept here
+for provenance - the tags and their release assets still exist on GitHub - but nothing after
+this point continues their numbering.
+
 ## [1.0.4](https://github.com/dante286/WorkLedger-Client/compare/v1.0.3...v1.0.4) (2026-06-23)
 
 
