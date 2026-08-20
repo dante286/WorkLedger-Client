@@ -63,8 +63,8 @@ WorkLedger uses [Conventional Commits](https://www.conventionalcommits.org/) wit
 
 | Commit Prefix | Version Bump | Example |
 |--------------|--------------|---------|
-| `fix:` | Patch (v1.0.X) | `fix: resolve timer not stopping on task switch` |
-| `feat:` | Minor (v1.X.0) | `feat: add task archiving functionality` |
+| `fix:` | Patch (v0.1.X) | `fix: resolve timer not stopping on task switch` |
+| `feat:` | Minor (v0.X.0) | `feat: add task archiving functionality` |
 | `feat!:` or `BREAKING CHANGE:` | Major (vX.0.0) | `feat!: redesign sync architecture` |
 | `chore:`, `docs:`, `refactor:`, `style:`, `test:` | No bump | `docs: update README with setup instructions` |
 
@@ -160,20 +160,23 @@ Understanding the codebase structure will help you contribute effectively:
 
 ```
 WorkLedger-Client/
-├── Models/              # Data models (Project, TaskItem, TimeEntry, SyncQueue)
+├── Models/              # Data models (Project, TaskItem, TimeEntry, SyncQueue, WeeklyReport)
 ├── ViewModels/          # MVVM view models with business logic
 ├── Views/               # Avalonia XAML UI definitions
-├── Services/            # Core services (LocalDb, Timer, AppState)
+├── Services/            # Core services (LocalDb, Settings, Timer, AppState,
+│                        #   SyncOrchestrator, SyncCoordinator, Reports)
+├── Sync/                # ISyncProvider and its implementations, plus the vendored
+│                        #   WorkLedger.Contracts wire DTOs under Sync/Contracts
 ├── Converters/          # Value converters for data binding
-├── Auth/                # [Placeholder] Authentication logic
-├── Sync/                # [Placeholder] Sync engine
+├── Tests/               # WorkLedger.Tests (xUnit)
+├── Auth/                # [Placeholder] Client-side auth beyond the device token
 └── LocalDb/             # [Placeholder] Database migrations
 ```
 
 ### Current Implementation Status
-- ✅ **Implemented:** Desktop UI, local SQLite, project/task management, time tracking
-- 🚧 **In Progress:** Sync engine, authentication, backend integration
-- 📋 **Planned:** Mobile apps, multi-device sync, reporting, team features
+- ✅ **Implemented:** Desktop UI, local SQLite, project/task management, time tracking,
+  folder- and API-based sync, weekly reports with CSV export
+- 📋 **Planned:** Mobile apps, server-side report rollups in the client, team features
 
 ## 🤝 Code of Conduct
 

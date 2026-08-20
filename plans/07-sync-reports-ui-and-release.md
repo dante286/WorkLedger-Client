@@ -1,5 +1,27 @@
 # Plan 7 — Sync + Reports UI, and Release (tickets TBD — see note in README.md)
 
+> **Merged 2026-08-20.** Everything below shipped, with these decisions worth recording:
+>
+> * **WL-67 landed first**, as recommended. `MainWindowViewModel` now has exactly one constructor;
+>   `MainWindowViewModel.Extensions.cs` is gone and the new surface lives in `.Sync.cs` / `.Reports.cs`
+>   partials.
+> * **A `SyncCoordinator` service sits between the view model and `SyncOrchestrator`** (item 3). It owns the
+>   `SyncMode` → provider mapping, the shared `HttpClient`, the pre-merge backup policy and the tick, so the
+>   view model only knows "sync now" and "register this device".
+> * **The settings save path was rebuilt (not in the original scope, but load-bearing here).** Both save paths
+>   constructed a *fresh* `AppSettings` from the bound properties, which blanked `DeviceId`, `ApiToken` and
+>   `LastSyncedAtUtc` — harmless while sync was unreachable, and a device-identity bug the moment it wasn't.
+>   There is now one live `AppSettings` instance shared by `App`, the view model and `SettingsSyncStore`.
+> * **`SyncInterval` was added** alongside `SyncMode` (Manual only / 5 min / 15 min / hourly), since item 4's
+>   background tick needs a period and hard-coding one would have been the only alternative.
+> * **`RunSyncAsync` now returns a `SyncRunResult` and takes a run lock.** A manual sync had no way to report
+>   failure (the orchestrator treats one as "retry next tick"), and the timer tick could otherwise interleave
+>   with the button.
+> * **No on-exit sync flush** (item 4's open question): `SyncQueue` is durable, so the only thing skipping it
+>   costs is latency until the next tick — against stalling app close on an unreachable server.
+> * **Release:** versioning was **reset to v0.1.0** to line up with WorkLedger-API's first release. See the
+>   Release section below for what that involved.
+
 ## Context
 
 This plan combines the original M6 (Sync + Reports UI) and M7 (Release) milestones — M7 is small enough
@@ -80,14 +102,26 @@ per-selected-project weekly total by summing `TimeEntry.DurationSeconds` for ent
 
 ### Release
 
-This repo uses Release Please (`release-please-config.json`, `release-please.yml` referenced in the
-`.csproj`'s Content items, `WorkLedger-Client.csproj:45`) with Conventional Commits driving version bumps.
-`AppSettings.CurrentApplicationVersion` is currently hardcoded to `"1.0.4"` (`Services/SettingsService.cs:11`)
-— Release Please manages the actual version bump via commit message conventions, not a manual edit, so this
-plan's release step is about correctly *landing* a `feat:`-prefixed commit/PR once M1–M6 are merged, not about
-manually bumping this constant (check whether Release Please's config already handles syncing this constant on
-release, e.g. via `release-please-config.json`'s `extra-files` — it doesn't currently list any, so confirm
-during this plan whether the constant needs manual updating or should be added to the `extra-files` bump list).
+This repo uses Release Please (`release-please-config.json`) with Conventional Commits driving version bumps.
+
+**What was actually found here (2026-08-20):** the `.csproj` referenced `.github/workflows/release-please.yml`
+in its Content items, but **that workflow had never been committed** — so no automated version bump had ever
+run, and the `v1.0.0`–`v1.0.4` tags were cut by hand while the packaging pipeline was being set up.
+`AppSettings.CurrentApplicationVersion` was hardcoded to `"1.0.4"` while `release-please-manifest.json` said
+`1.0.1`; the two had already drifted.
+
+Resolved as follows:
+
+* The missing `release-please.yml` workflow is committed, making Release Please the head of the
+  `release-please → package → release` chain.
+* `release-please-config.json` now lists `Services/SettingsService.cs` under `extra-files`, and the constant
+  carries the `// x-release-please-version` annotation the generic updater looks for — so it can no longer
+  drift from the tag.
+* **Versioning was reset to `v0.1.0`**, matching WorkLedger-API's first release, per the explicit decision to
+  treat this as the first real release of both repos. `release-please-manifest.json` is back to `0.0.0`, the
+  release commit carries a `Release-As: 0.1.0` footer, and `CHANGELOG.md` keeps the old `1.0.x` entries under
+  a "Superseded pre-release tags" heading rather than pretending they didn't happen. The old tags and their
+  release assets still exist on GitHub; nothing continues their numbering.
 
 ## Scope
 
