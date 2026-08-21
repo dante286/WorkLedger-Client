@@ -4,7 +4,9 @@ using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using System.Threading;
 using System.Timers;
+using Timer = System.Timers.Timer;
 using WorkLedger_Client.Models;
 using WorkLedger_Client.Sync;
 
@@ -41,25 +43,46 @@ namespace WorkLedger_Client.Services
     // Changes are applied parents-first so a batch carrying all three types resolves in one
     // pass, and RelinkOrphanedChildrenAsync catches the rest when a child arrives ahead of
     // its parent.
+    //
+    // WL-51: the merge has no undo, so an optional caller-supplied hook takes a safety backup
+    // immediately before the first remote change of a run overwrites or deletes a local row.
+    // See EnsurePreMergeBackupAsync for why it's once per run and why inserts don't count.
     public class SyncOrchestrator
     {
         private readonly LocalDbService _db;
         private readonly ISyncProvider _provider;
         private readonly ISyncCursorStore? _cursorStore;
+        private readonly Func<Task>? _preMergeBackupAsync;
         private readonly Timer _syncTimer = new();
+        private readonly SemaphoreSlim _runLock = new(1, 1);
 
         private DateTime _lastSyncedAt;
+
+        // WL-51: reset at the top of every RunSyncAsync, so the backup hook fires at most once
+        // per run - see EnsurePreMergeBackupAsync.
+        private bool _preMergeBackupTakenThisRun;
 
         // WL-92: cursorStore is optional so a caller with nothing to persist to (tests) gets
         // in-memory behaviour, but the app passes one - otherwise the cursor resets to
         // DateTime.MinValue on every launch and each start re-pulls the entire remote
         // history. That stays *correct*, since the version merge discards what it already
         // has, but the cost grows without bound as history accumulates.
-        public SyncOrchestrator(LocalDbService db, ISyncProvider provider, ISyncCursorStore? cursorStore = null)
+        //
+        // WL-51: preMergeBackupAsync is invoked at most once per RunSyncAsync, immediately
+        // before the first remote change that overwrites or deletes a local row. The *policy*
+        // (AppSettings.PreMergeBackupMode) lives in the delegate the caller supplies rather
+        // than here - this type only knows when the risky moment is, not whether the user
+        // wants a copy taken. Null means "no backup", which is what the tests use.
+        public SyncOrchestrator(
+            LocalDbService db,
+            ISyncProvider provider,
+            ISyncCursorStore? cursorStore = null,
+            Func<Task>? preMergeBackupAsync = null)
         {
             _db = db;
             _provider = provider;
             _cursorStore = cursorStore;
+            _preMergeBackupAsync = preMergeBackupAsync;
             _lastSyncedAt = cursorStore?.LastSyncedAtUtc ?? DateTime.MinValue;
             _syncTimer.Elapsed += OnSyncElapsed;
         }
@@ -67,26 +90,60 @@ namespace WorkLedger_Client.Services
         // The cursor this device will pass as the next pull's `since`.
         public DateTime LastSyncedAt => _lastSyncedAt;
 
-        public async Task RunSyncAsync()
+        // A sync run already in flight is never joined by a second one: the timer tick and a
+        // manual "sync now" would otherwise interleave a push and a merge over the same queue
+        // and the same rows. WaitAsync(0) skips rather than queues - by the time a backed-up
+        // run got its turn it would be re-doing work the run ahead of it had just done.
+        public async Task<SyncRunResult> RunSyncAsync()
         {
-            var push = await PushPendingChangesAsync();
-
-            // The remote won a conflict, so our copy of that entity is stale and the remote
-            // will not re-announce it (a losing item performs no remote write, precisely so
-            // it doesn't re-broadcast to every device - which also means its timestamp is
-            // already behind our cursor). Rewinding forces the next pull to re-deliver it,
-            // stating the operation rather than making us infer it from a payload. The
-            // version merge makes the extra changes cheap: everything already held loses its
-            // comparison and is discarded. See SyncResult.RequiresFullPull and WL-98.
-            if (push.RequiresFullPull)
+            if (!await _runLock.WaitAsync(0))
             {
-                Debug.WriteLine("Remote won a push conflict; rewinding the pull cursor for a full re-pull.");
-                _lastSyncedAt = DateTime.MinValue;
+                Debug.WriteLine("Sync already in progress; skipping this run.");
+                return SyncRunResult.Skipped();
             }
 
-            await PullAndMergeRemoteChangesAsync();
-            await PruneSyncedQueueAsync();
+            try
+            {
+                _preMergeBackupTakenThisRun = false;
+
+                var push = await PushPendingChangesAsync();
+
+                // The remote won a conflict, so our copy of that entity is stale and the remote
+                // will not re-announce it (a losing item performs no remote write, precisely so
+                // it doesn't re-broadcast to every device - which also means its timestamp is
+                // already behind our cursor). Rewinding forces the next pull to re-deliver it,
+                // stating the operation rather than making us infer it from a payload. The
+                // version merge makes the extra changes cheap: everything already held loses its
+                // comparison and is discarded. See SyncResult.RequiresFullPull and WL-98.
+                if (push.RequiresFullPull)
+                {
+                    Debug.WriteLine("Remote won a push conflict; rewinding the pull cursor for a full re-pull.");
+                    _lastSyncedAt = DateTime.MinValue;
+                }
+
+                var pull = await PullAndMergeRemoteChangesAsync();
+                await PruneSyncedQueueAsync();
+
+                var pushFailure = push.Failures.FirstOrDefault();
+                return new SyncRunResult
+                {
+                    Ran = true,
+                    Succeeded = pushFailure is null && pull.Succeeded,
+                    ErrorMessage = pushFailure?.ErrorMessage ?? pull.ErrorMessage,
+                    PushedCount = push.AcceptedSyncQueueIds.Count + push.RejectedSyncQueueIds.Count,
+                    ReceivedCount = pull.Changes.Count
+                };
+            }
+            finally
+            {
+                _runLock.Release();
+                SyncCompleted?.Invoke(this, EventArgs.Empty);
+            }
         }
+
+        // Raised after every completed run, timer-driven or manual, so a UI showing the last
+        // synced time doesn't have to poll for it.
+        public event EventHandler? SyncCompleted;
 
         private async Task<SyncResult> PushPendingChangesAsync()
         {
@@ -116,7 +173,7 @@ namespace WorkLedger_Client.Services
             return result;
         }
 
-        private async Task PullAndMergeRemoteChangesAsync()
+        private async Task<PullResult> PullAndMergeRemoteChangesAsync()
         {
             var pull = await _provider.PullAsync(_lastSyncedAt);
 
@@ -126,7 +183,7 @@ namespace WorkLedger_Client.Services
             if (!pull.Succeeded)
             {
                 Debug.WriteLine($"Sync pull failed, cursor unchanged: {pull.ErrorMessage}");
-                return;
+                return pull;
             }
 
             foreach (var change in OrderParentsFirst(pull.Changes))
@@ -138,6 +195,7 @@ namespace WorkLedger_Client.Services
             // ask for changes since a moment the server hasn't reached and miss the window.
             _lastSyncedAt = pull.ServerTime;
             _cursorStore?.Save(_lastSyncedAt);
+            return pull;
         }
 
         // WL-91: a child's parent link is resolved from the parent's SyncId at merge time,
@@ -193,13 +251,19 @@ namespace WorkLedger_Client.Services
             if (change.Operation == LocalDbService.SyncOperations.Delete)
             {
                 if (local != null)
+                {
+                    await EnsurePreMergeBackupAsync();
                     await _db.DeleteAsync(local);
+                }
                 return;
             }
 
             var incoming = DeserializePayload<Project>(change.PayloadJson) ?? local ?? new Project();
             incoming.Id = local?.Id ?? 0;
             StampFromRemote(incoming, change);
+            if (local != null)
+                await EnsurePreMergeBackupAsync();
+
             await WriteMergedAsync(incoming, isInsert: local is null);
         }
 
@@ -212,7 +276,10 @@ namespace WorkLedger_Client.Services
             if (change.Operation == LocalDbService.SyncOperations.Delete)
             {
                 if (local != null)
+                {
+                    await EnsurePreMergeBackupAsync();
                     await _db.DeleteAsync(local);
+                }
                 return;
             }
 
@@ -225,6 +292,9 @@ namespace WorkLedger_Client.Services
             // through. ProjectSyncId is the half that travels; 0 marks an orphan for
             // RelinkOrphanedChildrenAsync to pick up once the project arrives.
             incoming.ProjectId = await ResolveLocalProjectIdAsync(incoming.ProjectSyncId);
+            if (local != null)
+                await EnsurePreMergeBackupAsync();
+
             await WriteMergedAsync(incoming, isInsert: local is null);
         }
 
@@ -237,7 +307,10 @@ namespace WorkLedger_Client.Services
             if (change.Operation == LocalDbService.SyncOperations.Delete)
             {
                 if (local != null)
+                {
+                    await EnsurePreMergeBackupAsync();
                     await _db.DeleteAsync(local);
+                }
                 return;
             }
 
@@ -247,7 +320,39 @@ namespace WorkLedger_Client.Services
 
             // WL-91: see the note in ApplyTaskChangeAsync - same rule one level down.
             incoming.TaskItemId = await ResolveLocalTaskIdAsync(incoming.TaskSyncId);
+            if (local != null)
+                await EnsurePreMergeBackupAsync();
+
             await WriteMergedAsync(incoming, isInsert: local is null);
+        }
+
+        // WL-51: the last-write-wins merge has no undo. Once a remote change with a higher
+        // Version overwrites or deletes a local row, the previous local state is gone - and a
+        // misbehaving peer or a mis-restored database can carry a version high enough to win
+        // every comparison it meets. This takes a copy of the database *before* the first such
+        // write in a run, so there is something to restore from.
+        //
+        // Once per run, not once per overwrite: a run typically applies zero of these and
+        // occasionally a handful at once, so the first one is the moment worth snapshotting.
+        // Inserts deliberately don't trigger it - a remote row this device has never seen
+        // destroys nothing. A failing backup is logged and does not abort the merge: refusing
+        // to sync because the backup folder is unwritable would be a worse outcome than the
+        // one being guarded against.
+        private async Task EnsurePreMergeBackupAsync()
+        {
+            if (_preMergeBackupAsync is null || _preMergeBackupTakenThisRun)
+                return;
+
+            _preMergeBackupTakenThisRun = true;
+
+            try
+            {
+                await _preMergeBackupAsync();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Pre-merge backup failed, continuing with the merge: {ex.Message}");
+            }
         }
 
         // WL-99: carries the change's own identity and versioning onto the row about to be written.

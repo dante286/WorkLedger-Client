@@ -8,7 +8,10 @@ namespace WorkLedger_Client.Services
 {
     public class AppSettings
     {
-        public const string CurrentApplicationVersion = "1.0.4";
+        // Kept in step with the tagged release by Release Please - the trailing annotation is
+        // what its generic updater looks for, and release-please-config.json lists this file
+        // under extra-files. Don't hand-edit it outside of a deliberate versioning reset.
+        public const string CurrentApplicationVersion = "0.1.0"; // x-release-please-version
 
         public string Theme { get; set; } = "System"; // "System", "Light", "Dark"
         public string DataDirectory { get; set; } = string.Empty;
@@ -46,6 +49,51 @@ namespace WorkLedger_Client.Services
         // key in older settings.json (System.Text.Json leaves this initializer's value
         // untouched), so no explicit LoadSettings backfill is needed.
         public int SyncRetentionDays { get; set; } = 30;
+
+        // Which ISyncProvider the app drives, if any. Off is the default and the only value
+        // that leaves SyncOrchestrator idle - see SyncCoordinator, which owns the mapping
+        // from this to a concrete provider.
+        public SyncMode SyncMode { get; set; } = SyncMode.Off;
+
+        // How often the background sync tick fires. Value == minutes, the same convention
+        // BackupInterval uses. Only consulted when SyncMode != Off; "Sync now" is always
+        // available regardless.
+        public SyncInterval SyncInterval { get; set; } = SyncInterval.FifteenMinutes;
+
+        // WL-51: whether SyncOrchestrator takes a safety backup before the first remote-wins
+        // overwrite/delete of a sync run. Defaults to OncePerSession: enough to make a bad
+        // merge recoverable without copying the database on every single run.
+        public PreMergeBackupMode PreMergeBackupMode { get; set; } = PreMergeBackupMode.OncePerSession;
+    }
+
+    public enum SyncMode
+    {
+        Off = 0,
+
+        // FileSyncProvider over AppSettings.SyncFolderPath - a shared folder, no backend.
+        File = 1,
+
+        // ApiSyncProvider against AppSettings.ApiEndpoint, using the device-bootstrapped JWT.
+        Api = 2
+    }
+
+    // Value == minutes, mirroring BackupInterval. Disabled means "manual sync only".
+    public enum SyncInterval
+    {
+        Disabled = 0,
+        FiveMinutes = 5,
+        FifteenMinutes = 15,
+        OneHour = 60
+    }
+
+    // WL-51. OncePerSession means once per application run, not once per RunSyncAsync call -
+    // the point is to have *a* pre-merge snapshot to fall back on, and re-copying the database
+    // on every sync cycle that happens to merge something costs more than it protects.
+    public enum PreMergeBackupMode
+    {
+        Never = 0,
+        OncePerSession = 1,
+        Always = 2
     }
 
     public enum BackupInterval
@@ -153,7 +201,12 @@ namespace WorkLedger_Client.Services
                     SaveSettings(settings);
                 }
 
-                if (string.IsNullOrWhiteSpace(settings.ApplicationVersion))
+                // Records which build last wrote this file, so it follows the running version
+                // rather than only being filled in when absent. Left as a backfill-on-blank it
+                // would pin the display to whatever version first created the file - which is
+                // how a settings.json written by a v1.0.4 build kept reporting 1.0.4 after the
+                // reset to the 0.1.x line.
+                if (settings.ApplicationVersion != AppSettings.CurrentApplicationVersion)
                 {
                     settings.ApplicationVersion = AppSettings.CurrentApplicationVersion;
                     SaveSettings(settings);
@@ -214,7 +267,29 @@ namespace WorkLedger_Client.Services
             }
         }
 
+        // Writers are no longer all on the UI thread: the sync timer persists the pull cursor
+        // (and a renewed API token) through SettingsSyncStore while the settings screen's
+        // debounced autosave may be writing the same file from its own task. Two concurrent
+        // File.WriteAllText calls on one path throw, and the catch below would swallow it -
+        // losing whichever save lost the race, silently.
+        private static readonly object SaveLock = new();
+
         public void SaveSettings(AppSettings settings)
+        {
+            try
+            {
+                lock (SaveLock)
+                {
+                    WriteSettings(settings);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to save settings: {ex.Message}");
+            }
+        }
+
+        private void WriteSettings(AppSettings settings)
         {
             try
             {

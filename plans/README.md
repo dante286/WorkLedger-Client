@@ -20,23 +20,20 @@ rather than getting its own file, so there are 7 plans covering the 8 original m
 | 4 | [04-sync-abstraction-orchestrator.md](04-sync-abstraction-orchestrator.md) | TBD | 2 (parallel with 3) |
 | 5 | [05-file-sync-provider.md](05-file-sync-provider.md) | TBD | 4 |
 | 6 | [06-api-sync-provider.md](06-api-sync-provider.md) | [WL-96](https://mnisan.atlassian.net/browse/WL-96) | 4, ~~WL-91~~, ~~WL-93~~ (both fixed on plan 6's branch) |
-| 7 | [07-sync-reports-ui-and-release.md](07-sync-reports-ui-and-release.md) | TBD | 4, 5 |
+| 7 | [07-sync-reports-ui-and-release.md](07-sync-reports-ui-and-release.md) | TBD (folds in WL-50, WL-51, WL-67, WL-102) | 4, 5 |
 
 ## Sequencing
 
 - **1 and 2 are prerequisites for everything else** — run them first, in order.
 - **3 and 4 can run in parallel** once 2 lands (different files: 3 touches `LocalDbService`, 4 adds a new `Sync/` abstraction + `SyncOrchestrator`).
 - **5 and 6 both depend on 4** but not on each other. 5 (file-based) has merged. **6 no longer waits on a backend** — see "Cross-repo: the server" below — but it *is* blocked on WL-91 and WL-93.
-- **7** depends on 4 for the Sync UI half, and on nothing but the current codebase for the Reports UI half (that half could be pulled forward if reporting matters more than sync for the next release). The Release step at the end of 7 depends on everything else being merged. Plan 7 now also folds in WL-50 (Reports CSV export) and WL-51 (pre-merge safety backup) — see its addendum.
-- **Recommended before 7: WL-67** (consolidate `MainWindowViewModel`'s 5-arg/6-arg constructors — one subtask of WL-52's constructor/`TaskItemViewModel` cleanup). Plan 7 threads a `SyncOrchestrator` dependency through that same constructor; landing WL-67 first avoids doing that edit twice. Not a hard blocker, just wasted motion if skipped.
+- **7 has merged**, and with it every plan in this folder. It folded in WL-50 (Reports CSV export), WL-51 (pre-merge safety backup), WL-67 (constructor consolidation — done first, as recommended) and WL-102 (the ISO week fix). Its release step is what cut **v0.1.0**.
 
 ## Cross-repo: the server
 
 The backend is a **real, separate repo** — `WorkLedger-API` — with its own plan set (`plans/S0`–`S5`). It is
-**C# / ASP.NET Core + EF Core + Postgres**, *not* the FastAPI/SQLAlchemy service this repo's `README.md` still
-describes (that description is stale and Plan 7 item 10 corrects it). S0 (scaffold + the shared
-`WorkLedger.Contracts` wire types), S1 (data model), and S2 (auth) have merged; S3 (`/sync/push`,
-`/sync/pull`, **WL-76**) is in flight.
+**C# / ASP.NET Core + EF Core + Postgres**, *not* the FastAPI/SQLAlchemy service this repo's `README.md` used
+to describe (corrected by Plan 7 item 10). All of its plans S0–S5 have merged.
 
 The two repos meet **only** at `WorkLedger.Contracts`, the shared DTO library. Plan 6 consumes it rather than
 defining its own wire types — that shared-compiler-contract is the reason the server is C#.
@@ -49,7 +46,7 @@ Reconciling this repo against the server's S3 plan surfaced four cross-repo gaps
 | WL-92 | Pull cursor is the client clock and resets to `MinValue` each launch | Its own ticket, or folded into Plan 7 item 2 |
 | WL-93 | Deletes are queued without a version bump, so no peer ever applies them (a live bug in file-based sync today) | Its own ticket; **blocks Plan 6** |
 | WL-94 | Push acks key differently on each side — map results positionally | Scoped inside Plan 6 |
-| WL-102 | Week boundaries disagree: the client's weekly total starts the week on **Sunday** (`MainWindowViewModel.cs:345`), the server's `/reports/weekly` on **Monday** (ISO-8601). Same account, different seven-day range | Scoped inside Plan 7 (Reports UI) — adopt the server's ISO Monday rule |
+| WL-102 | Week boundaries disagreed: the client's weekly total started the week on **Sunday**, the server's `/reports/weekly` on **Monday** (ISO-8601). Same account, different seven-day range | **Fixed in Plan 7** — `ReportsService.StartOfIsoWeek` is now the one definition, used by both the header total and the Reports tab |
 
 **Rule of thumb:** the reconciliation rules live in `WorkLedger-API/plans/S3-sync-endpoints.md`, and Plan 6
 restates the client-facing half of them. If either copy changes, change both in the same breath — and never

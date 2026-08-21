@@ -2,6 +2,10 @@
   "release-type": "simple",
   "versioning-strategy": "default",
   "packages": {
-    ".": {}
+    ".": {
+      "extra-files": [
+        "Services/SettingsService.cs"
+      ]
+    }
   }
 }

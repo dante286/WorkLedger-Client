@@ -77,9 +77,20 @@ namespace WorkLedger_Client.ViewModels
 
         public readonly LocalDbService _localDbService;
 
-        private readonly SettingsService? _settingsService;
-        private readonly ThemeService? _themeService;
+        private readonly SettingsService _settingsService;
+        private readonly ThemeService _themeService;
         private readonly ToastService? _toastService;
+        private readonly SyncCoordinator _syncCoordinator;
+        private readonly ReportsService _reportsService;
+
+        // WL-67/WL-95: the single live AppSettings instance, shared with SyncCoordinator and
+        // through it with SettingsSyncStore. Every save mutates and re-persists *this* object
+        // rather than building a fresh AppSettings from the bound properties: the settings
+        // screen doesn't know about DeviceId, the issued API token, or the pull cursor, so a
+        // freshly-constructed one would write those back as empty - re-minting the DeviceId on
+        // the next load and making this install look like a brand new device to every peer.
+        private readonly AppSettings _settings;
+
         private CancellationTokenSource? _autosaveCts;
 
         public System.Collections.ObjectModel.ObservableCollection<string> ThemeOptions { get; } = new System.Collections.ObjectModel.ObservableCollection<string> { "System", "Light", "Dark" };
@@ -113,17 +124,20 @@ namespace WorkLedger_Client.ViewModels
         [ObservableProperty]
         private string _applicationVersion = WorkLedger_Client.Services.AppSettings.CurrentApplicationVersion;
 
-        
-        public MainWindowViewModel()
-        {
-            _localDbService = new LocalDbService("workledger.db");
-            _appState = new AppStateService();
-            _timerService = new TimerService(_localDbService, _appState);
-            _timerService.TimerTick += OnTimerTick;
-            LoadProjects();
-        }
-
-        public MainWindowViewModel(LocalDbService localDbService, TimerService timerService, AppStateService appState, ThemeService themeService, SettingsService settingsService)
+        // WL-67: the one constructor. There used to be three - a parameterless one that
+        // hardcoded its own LocalDbService, a five-arg one without ToastService, and this
+        // one - of which only this was ever called. Plan 7 adds another dependency
+        // (SyncCoordinator), which is the point at which keeping three of these in step
+        // stopped being worth it.
+        public MainWindowViewModel(
+            LocalDbService localDbService,
+            TimerService timerService,
+            AppStateService appState,
+            ThemeService themeService,
+            SettingsService settingsService,
+            ToastService toastService,
+            AppSettings settings,
+            SyncCoordinator syncCoordinator)
         {
             _localDbService = localDbService;
             _timerService = timerService;
@@ -132,45 +146,104 @@ namespace WorkLedger_Client.ViewModels
 
             _themeService = themeService;
             _settingsService = settingsService;
+            _toastService = toastService;
+            _settings = settings;
+            _syncCoordinator = syncCoordinator;
+            _reportsService = new ReportsService(localDbService);
 
-            // Load persisted settings
-            var settings = _settingsService.LoadSettings();
             SelectedTheme = string.IsNullOrWhiteSpace(settings.Theme) ? "System" : settings.Theme;
             DataDirectory = settings.DataDirectory ?? string.Empty;
+            BackupDirectory = settings.BackupDirectory ?? string.Empty;
+            BackupInterval = settings.BackupInterval;
+            BackupOnClose = settings.BackupOnClose;
+            SyncFolderPath = settings.SyncFolderPath ?? string.Empty;
+            SyncMode = settings.SyncMode;
+            SyncInterval = settings.SyncInterval;
+            PreMergeBackupMode = settings.PreMergeBackupMode;
+            ApiEndpoint = settings.ApiEndpoint ?? string.Empty;
+            DeviceId = settings.DeviceId ?? string.Empty;
             ApplicationVersion = string.IsNullOrWhiteSpace(settings.ApplicationVersion)
                 ? WorkLedger_Client.Services.AppSettings.CurrentApplicationVersion
                 : settings.ApplicationVersion;
 
+            RefreshSyncStatus();
+
+            // A timer-driven sync updates the cursor without anyone pressing anything, so the
+            // displayed "last synced" has to follow the orchestrator rather than the button.
+            _syncCoordinator.SyncCompleted += OnSyncCompleted;
+
+            try
+            {
+                _timerService.ConfigureBackupInterval(settings.BackupInterval);
+            }
+            catch { }
+
+            _timerService.BackupTick += async () =>
+            {
+                try
+                {
+                    // No interval gate here: this handler also fires for the on-close backup,
+                    // which can be enabled independently while BackupInterval is Disabled.
+                    // The periodic timer itself is only running when BackupInterval != Disabled,
+                    // and the on-close call site only fires when BackupOnClose is set.
+                    if (string.IsNullOrWhiteSpace(BackupDirectory)) return;
+                    var ok = await _settingsService.CreateBackupAsync(BackupDirectory);
+                    _toastService?.ShowToast(ok ? "Backup saved" : "Backup failed", 1400);
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Backup handler error: {ex.Message}");
+                }
+            };
+
             LoadProjects();
+            _ = LoadWeeklyReportAsync();
+        }
+
+        // Copies the bound settings values onto the live AppSettings instance and persists it.
+        // Everything the settings screen doesn't surface (DeviceId, ApiToken, LastSyncedAtUtc,
+        // SyncRetentionDays) survives untouched because this mutates rather than rebuilds.
+        private void PersistSettings()
+        {
+            _settings.Theme = SelectedTheme;
+            _settings.DataDirectory = DataDirectory;
+            _settings.BackupDirectory = BackupDirectory;
+            _settings.BackupInterval = BackupInterval;
+            _settings.BackupOnClose = BackupOnClose;
+            _settings.SyncFolderPath = SyncFolderPath;
+            _settings.SyncMode = SyncMode;
+            _settings.SyncInterval = SyncInterval;
+            _settings.PreMergeBackupMode = PreMergeBackupMode;
+            _settings.ApiEndpoint = ApiEndpoint;
+            _settings.ApplicationVersion = ApplicationVersion;
+
+            _settingsService.SaveSettings(_settings);
+
+            // Picks up a changed mode/folder/endpoint/interval, and is a no-op when none of
+            // them moved.
+            _syncCoordinator.ApplyConfiguration();
+        }
+
+        private void ApplySelectedTheme()
+        {
+            if (SelectedTheme.Equals("System", StringComparison.OrdinalIgnoreCase))
+            {
+                var isDark = Avalonia.Application.Current?.ActualThemeVariant == Avalonia.Styling.ThemeVariant.Dark;
+                _themeService.SetTheme(isDark == true ? "Dark" : "Light");
+            }
+            else
+            {
+                _themeService.SetTheme(SelectedTheme);
+            }
         }
 
         [RelayCommand]
-        private async Task SaveSettings()
+        private void SaveSettings()
         {
             try
             {
-                var settings = new WorkLedger_Client.Services.AppSettings
-                {
-                    Theme = SelectedTheme,
-                    DataDirectory = DataDirectory,
-                    BackupDirectory = BackupDirectory,
-                    BackupInterval = BackupInterval,
-                    BackupOnClose = BackupOnClose,
-                    SyncFolderPath = SyncFolderPath,
-                    ApplicationVersion = ApplicationVersion
-                };
-                _settingsService!.SaveSettings(settings);
-
-                if (SelectedTheme.Equals("System", StringComparison.OrdinalIgnoreCase))
-                {
-                    var isDark = Avalonia.Application.Current?.ActualThemeVariant == Avalonia.Styling.ThemeVariant.Dark;
-                    _themeService!.SetTheme(isDark == true ? "Dark" : "Light");
-                }
-                else
-                {
-                    _themeService!.SetTheme(SelectedTheme);
-                }
-
+                PersistSettings();
+                ApplySelectedTheme();
                 _toastService?.ShowToast("Settings saved", 1400);
             }
             catch (Exception ex)
@@ -212,6 +285,29 @@ namespace WorkLedger_Client.ViewModels
             TriggerAutosave();
         }
 
+        partial void OnSyncModeChanged(SyncMode value)
+        {
+            OnPropertyChanged(nameof(IsFileSyncSelected));
+            OnPropertyChanged(nameof(IsApiSyncSelected));
+            OnPropertyChanged(nameof(IsSyncConfigured));
+            TriggerAutosave();
+        }
+
+        partial void OnSyncIntervalChanged(SyncInterval value)
+        {
+            TriggerAutosave();
+        }
+
+        partial void OnPreMergeBackupModeChanged(PreMergeBackupMode value)
+        {
+            TriggerAutosave();
+        }
+
+        partial void OnApiEndpointChanged(string value)
+        {
+            TriggerAutosave();
+        }
+
         private void TriggerAutosave()
         {
             // Cancel previous scheduled save
@@ -227,29 +323,8 @@ namespace WorkLedger_Client.ViewModels
                     await Task.Delay(800, token); // debounce interval
                     if (token.IsCancellationRequested) return;
 
-                    // Perform save (no long confirmation)
-                    var settings = new WorkLedger_Client.Services.AppSettings
-                    {
-                        Theme = SelectedTheme,
-                        DataDirectory = DataDirectory,
-                        BackupDirectory = BackupDirectory,
-                        BackupInterval = BackupInterval,
-                        BackupOnClose = BackupOnClose,
-                        SyncFolderPath = SyncFolderPath,
-                        ApplicationVersion = ApplicationVersion
-                    };
-
-                    _settingsService!.SaveSettings(settings);
-
-                    if (SelectedTheme.Equals("System", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var isDark = Avalonia.Application.Current?.ActualThemeVariant == Avalonia.Styling.ThemeVariant.Dark;
-                        _themeService!.SetTheme(isDark == true ? "Dark" : "Light");
-                    }
-                    else
-                    {
-                        _themeService!.SetTheme(SelectedTheme);
-                    }
+                    PersistSettings();
+                    ApplySelectedTheme();
 
                     _toastService?.ShowToast("Autosaved", 1000);
                 }
@@ -340,10 +415,16 @@ namespace WorkLedger_Client.ViewModels
             Tasks.Clear();
             TaskCount = tasks.Count;
             
-            // Calculate weekly total
+            // Calculate weekly total.
+            //
+            // WL-102: "this week" is the ISO week starting Monday, computed by the same helper
+            // the Reports tab uses - which is also the rule the server's /reports/weekly
+            // applies. This used to subtract (int)DayOfWeek, which numbers Sunday as 0 and so
+            // started a new week every Sunday, one day ahead of the server.
             long weeklySeconds = 0;
-            var weekStart = DateTime.UtcNow.Date.AddDays(-(int)DateTime.UtcNow.DayOfWeek);
-            
+            var weekStart = ReportsService.StartOfIsoWeek(DateTime.UtcNow);
+            var weekEnd = weekStart.AddDays(7);
+
             foreach (var task in tasks)
             {
                 // Skip archived tasks if not showing them
@@ -357,13 +438,15 @@ namespace WorkLedger_Client.ViewModels
                 var entries = await _localDbService.GetTimeEntriesByTaskIdAsync(task.Id);
                 foreach (var entry in entries)
                 {
-                    if (entry.EndTime != null && entry.StartTime >= weekStart)
+                    if (entry.EndTime != null && entry.StartTime >= weekStart && entry.StartTime < weekEnd)
                     {
                         weeklySeconds += entry.DurationSeconds ?? 0;
                     }
                 }
             }
-            WeeklyTotal = TimeSpan.FromSeconds(weeklySeconds).ToString(@"hh\:mm\:ss");
+            // Shared with the Reports tab so a week over 24 hours reads as e.g. 41:12:00
+            // rather than silently wrapping the way TimeSpan's "hh" specifier does.
+            WeeklyTotal = ReportDuration.Format(weeklySeconds);
         }
 
         public async Task LoadTimeEntriesAsync(TaskItemViewModel taskViewModel)
@@ -650,12 +733,6 @@ namespace WorkLedger_Client.ViewModels
                     File.WriteAllText(testFile, "test");
                     File.Delete(testFile);
 
-                    if (_settingsService == null)
-                    {
-                        _toastService?.ShowToast("Settings service unavailable; cannot change data directory", 3000);
-                        return;
-                    }
-
                     var currentDataDirectory = _settingsService.DataDirectory;
 
                     if (path.Equals(currentDataDirectory, StringComparison.OrdinalIgnoreCase))
@@ -674,19 +751,13 @@ namespace WorkLedger_Client.ViewModels
 
                     DataDirectory = path;
 
-                    var settings = new WorkLedger_Client.Services.AppSettings
-                    {
-                        Theme = SelectedTheme,
-                        DataDirectory = path,
-                        BackupDirectory = BackupDirectory,
-                        BackupInterval = BackupInterval,
-                        BackupOnClose = BackupOnClose,
-                        SyncFolderPath = SyncFolderPath,
-                        ApplicationVersion = ApplicationVersion
-                    };
+                    // Mutates the live AppSettings - keeping DeviceId, the issued API token
+                    // and the pull cursor, none of which the settings screen holds - and
+                    // rewrites it at the current location before anything points elsewhere.
+                    PersistSettings();
 
                     // Persist the settings at their new home...
-                    new SettingsService(path).SaveSettings(settings);
+                    new SettingsService(path).SaveSettings(_settings);
 
                     // ...and refresh the pointer settings.json at the OS default location, since
                     // DiscoverDataDirectory() always bootstraps by reading settings.json there to
@@ -694,7 +765,7 @@ namespace WorkLedger_Client.ViewModels
                     var defaultDir = SettingsService.GetDefaultDataDirectory();
                     if (!defaultDir.Equals(path, StringComparison.OrdinalIgnoreCase))
                     {
-                        new SettingsService(defaultDir).SaveSettings(settings);
+                        new SettingsService(defaultDir).SaveSettings(_settings);
                     }
 
                     _toastService?.ShowToast("Data directory changed. Restart the app to finish switching over.", 3000);

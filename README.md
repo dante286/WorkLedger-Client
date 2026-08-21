@@ -15,34 +15,28 @@ This repository is the **client**. The backend lives in a separate repository, [
 - Project and task management, archive/unarchive
 - Time tracking with a timer service, manual time entry management
 - Running weekly total per project, and a per‑task total
+- Reports tab: weekly per‑project and per‑task totals, with CSV export
 - MVVM architecture with CommunityToolkit.Mvvm
 - Light/dark/system theming
 - Configurable data directory, scheduled + on‑close backups, restore from folder
 
-**Sync engine (built, not yet exposed in the UI)**
+**Sync engine**
 - Per‑entity versioning: every record carries a cross‑device `SyncId`, a `Version` counter, and the `OriginDeviceId` that last wrote it
 - A local `SyncQueue` — every create/update/delete is enqueued in the same transaction as the write itself
 - `SyncOrchestrator`: push → pull → merge, with last‑write‑wins conflict resolution and self‑echo suppression
 - Two transports behind one `ISyncProvider` abstraction:
   - **`FileSyncProvider`** — sync through a shared folder (Dropbox / OneDrive / network share), no server required
   - **`ApiSyncProvider`** — sync against a self‑hosted WorkLedger-API instance, with device‑bootstrapped JWT auth
-- 117 unit/integration tests, including multi‑device merge scenarios and cross‑repo contract drift guards
+- Driven from the Settings tab: a **Sync Mode** switch (Off / Shared folder / WorkLedger API), device
+  registration, a sync interval, a *Sync Now* button, and a last‑synced readout
+- A safety backup taken before the first remote change of a sync run overwrites or deletes local data
+- 157 unit/integration tests, including multi‑device merge scenarios and cross‑repo contract drift guards
 
 **Backend** — implemented and deployable; see [WorkLedger-API](https://github.com/dante286/WorkLedger-API).
 
-### 🚧 Not yet wired up
-
-The sync stack above is **complete and tested but has no UI entry point**: `SyncOrchestrator` is currently
-constructed only by the test suite, so nothing runs a sync at application runtime. The remaining work — a
-`SyncMode` setting (Off / Folder / API), sync configuration in the Settings tab, a "Sync now" command, and
-starting the orchestrator at startup — is [`plans/07-sync-reports-ui-and-release.md`](plans/07-sync-reports-ui-and-release.md).
-
-The **Reports tab exists but is a placeholder.** The server already computes authoritative cross‑device
-rollups; the client's own local rollup view is part of that same plan.
-
 ### 📋 Planned (Roadmap)
 
-- Sync + Reports UI, then the v1.0 release (plan 7)
+- Consuming the server's cross‑device report rollups (the Reports tab is local‑only today)
 - Mobile apps (Android/iOS)
 - Tagging system for tasks
 - Client‑side analytics (focus time, context switching)
@@ -106,15 +100,34 @@ Settings → **Data Directory** moves both files somewhere else (a synced folder
 copies the existing data across immediately. Settings also configures a backup folder, a backup interval,
 backup‑on‑close, and restore‑from‑folder.
 
+### Turning on sync
+
+Sync is **off by default** — nothing leaves the machine until you choose a mode in Settings → **Sync**.
+
+| Mode | What it needs | How it works |
+|---|---|---|
+| **Off** | — | The default. No provider is constructed and nothing is contacted. |
+| **Shared folder** | A folder both installs can see | Each push writes one JSON file into `<folder>/changes/`; each pull reads the files the other devices wrote. No server. |
+| **WorkLedger API** | A reachable [WorkLedger-API](https://github.com/dante286/WorkLedger-API) instance and its bootstrap secret | Press **Register this device** once — the server issues a JWT, which the client stores and renews itself. The secret is used for that one call and is never saved. |
+
+The **Sync Interval** setting drives a background tick (or `Manual only`, in which case *Sync Now* is the only
+trigger). **Backup Before Merge** takes a copy of `settings.json` and `workledger.db` into
+`<data directory>/pre-merge-backups/` before the first incoming change of a sync run overwrites or deletes
+anything local — `Once per session` by default, with the five most recent snapshots kept.
+
+Queued changes are durable, so there is deliberately no sync-on-exit: closing the app never waits on the
+network, and anything still pending goes out on the next tick or launch.
+
 ### Project Structure Quick Reference
 
 ```
 WorkLedger-Client/
  ├── Models/            Project, TaskItem, TimeEntry, SyncQueue (+ IVersionedEntity)
- ├── ViewModels/        MainWindowViewModel (+ .Extensions partial), TaskItemViewModel
+ ├── ViewModels/        MainWindowViewModel (+ .Sync / .Reports partials), TaskItemViewModel
  ├── Views/             Avalonia XAML: MainWindow, dialogs, ToastWindow
  ├── Services/          LocalDbService, SettingsService, TimerService, AppStateService,
- │                      SyncOrchestrator, ThemeService, ToastService
+ │                      SyncOrchestrator, SyncCoordinator, ReportsService, ThemeService,
+ │                      ToastService
  ├── Sync/              ISyncProvider, FileSyncProvider, ApiSyncProvider, NullSyncProvider,
  │                      SyncResult/PullResult/RemoteChange, SyncStores
  │    └── Contracts/    Vendored copy of the server's WorkLedger.Contracts wire DTOs
@@ -156,8 +169,8 @@ WorkLedger-Client/
                v
 +-----------------------------+
 |      SyncOrchestrator       |     push -> pull -> merge
-| (last-write-wins, self-echo |     (not yet started at app runtime)
-|  suppression, queue prune)  |
+| (last-write-wins, self-echo |     driven by SyncCoordinator, per the
+|  suppression, queue prune)  |     SyncMode setting
 +--------------+--------------+
                |
         ISyncProvider
@@ -311,23 +324,23 @@ The server computes these as the **authoritative cross‑device rollup** — onc
 account, only the server holds the merged picture — and offers JSON or CSV export. See the WorkLedger-API
 README for the endpoints and their parameters.
 
-The client's Reports **tab** is a placeholder today, though the Projects tab already shows a running weekly
-total. The tab will compute its own local view rather than requiring a server, so reporting works in the
-offline‑first and folder‑sync cases too.
+The client's Reports **tab** computes its own local view from the SQLite database — per‑project and per‑task
+totals for the current week, exportable to CSV — so reporting works with sync switched off entirely. It does
+not call the server's endpoints; consuming those cross‑device rollups is a later, additive change.
 
-Both sides count an entry the same way — it belongs wholly to the UTC day it *started*, so an entry spanning
-midnight is not split, and entries still running are excluded from totals because they have no fixed length.
-One rule does **not** currently agree: the client's existing weekly total starts the week on **Sunday**, while
-the server's `/reports/weekly` uses ISO weeks starting **Monday**. The client will adopt the server's ISO
-Monday–Sunday week as part of the Reports work in plan 7, so that a week means the same seven days everywhere.
+Both sides count an entry the same way: it belongs wholly to the UTC day it *started*, so an entry spanning
+midnight is not split; entries still running are excluded from totals because they have no fixed length; and
+a week is the **ISO week, Monday 00:00 UTC through Sunday 23:59:59 UTC**. The client computes that week in one
+shared helper (`ReportsService.StartOfIsoWeek`) used by both the Projects tab's running weekly total and the
+Reports tab, so the two cannot disagree with each other or with the server.
 
 ---
 
 ## 📦 Build Plans
 
-The path to v1.0 is broken into seven sequenced, self‑contained plans under [`plans/`](plans/README.md) —
-plans 1–6 are merged; plan 7 (Sync + Reports UI, then release) is the remainder. The server's own plans
-(S0–S5) live in the API repository and are all complete. [`AGENTS.md`](AGENTS.md) covers running plans in
+The path to the first release is broken into seven sequenced, self‑contained plans under
+[`plans/`](plans/README.md) — all seven are merged, plan 7 (Sync + Reports UI, then release) last. The
+server's own plans (S0–S5) live in the API repository and are all complete. [`AGENTS.md`](AGENTS.md) covers running plans in
 parallel across worktrees.
 
 ## DevOps Workflow in GitHub
@@ -338,8 +351,8 @@ Conventional Commits cheat sheet for your team to drive the version bumps:
 
 | Commit prefix | Version bump |
 |----------|-----------|
-| fix:  | v1.0.X patch |
-| feat: | v1.X.0 minor |
+| fix:  | v0.1.X patch |
+| feat: | v0.X.0 minor |
 | feat!: or BREAKING CHANGE: | vX.0.0 major |
 | chore:, docs:, refactor: | no bump |
 
