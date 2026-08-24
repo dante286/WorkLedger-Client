@@ -12,6 +12,7 @@ using System.Threading.Tasks;
 using WorkLedger.Contracts.Auth;
 using WorkLedger.Contracts.Sync;
 using WorkLedger_Client.Models;
+using WorkLedger_Client.Services;
 
 namespace WorkLedger_Client.Sync
 {
@@ -244,6 +245,7 @@ namespace WorkLedger_Client.Sync
             var accepted = new List<int>();
             var rejected = new List<int>();
             var failures = new List<SyncFailure>();
+            var authoritativeChanges = new List<RemoteChange>();
             var serverWon = false;
 
             for (var i = 0; i < changes.Count; i++)
@@ -268,21 +270,65 @@ namespace WorkLedger_Client.Sync
                 });
 
                 // An authoritative payload is how the server distinguishes "my row won" from
-                // "your payload was invalid" - it only fills one in for the former.
-                //
-                // result.AuthoritativeOperation (WL-98) names what that payload is - "update"
-                // or "delete" - which is everything needed to adopt it here and skip the
-                // re-pull. Deliberately not read yet - that is WL-101; see SyncResult.RequiresFullPull.
-                if (!string.IsNullOrEmpty(result.AuthoritativePayloadJson))
+                // "your payload was invalid" - it only fills one in for the former. A validation
+                // failure leaves the row retired and there is nothing to go and fetch.
+                if (string.IsNullOrEmpty(result.AuthoritativePayloadJson))
+                    continue;
+
+                // WL-101: adopt the winner directly when the server says what it is. Falling
+                // back to the cursor rewind when it doesn't is not caution for its own sake -
+                // guessing "update" for a tombstone is the one mistake here that can't be
+                // undone. See SyncResult.AuthoritativeChanges.
+                var authoritative = ToAuthoritativeChange(queueEntry, result);
+                if (authoritative is null)
                     serverWon = true;
+                else
+                    authoritativeChanges.Add(authoritative);
             }
 
             return new SyncResult
             {
                 AcceptedSyncQueueIds = accepted,
                 RejectedSyncQueueIds = rejected,
+                AuthoritativeChanges = authoritativeChanges,
                 RequiresFullPull = serverWon,
                 Failures = failures
+            };
+        }
+
+        // WL-101: shape a server-wins rejection into the same RemoteChange a pull would have
+        // delivered, so the orchestrator has one merge path rather than two. Null when the
+        // result names no operation the merge can act on, which is the caller's cue to rewind.
+        //
+        // Version comes from AuthoritativeVersion, not from the payload: for a tombstone the two
+        // differ, since the server stores deletes at existing.Version + 1 (its WL-93
+        // accommodation) while the payload is still the pre-delete row. EntityType and EntityId
+        // come from the queue row we pushed - results are positional and SyncItemResult.EntityId
+        // is not a usable key (WL-94) - and the operation is mapped onto this client's own
+        // constants rather than passed through, so the merge compares like with like.
+        private static RemoteChange? ToAuthoritativeChange(SyncQueue queueEntry, SyncItemResult result)
+        {
+            var isDelete = string.Equals(
+                result.AuthoritativeOperation, LocalDbService.SyncOperations.Delete, StringComparison.OrdinalIgnoreCase);
+            var isUpdate = string.Equals(
+                result.AuthoritativeOperation, LocalDbService.SyncOperations.Update, StringComparison.OrdinalIgnoreCase);
+
+            if (!isDelete && !isUpdate)
+                return null;
+
+            // The winner's author, lifted from the payload the same way a pushed change's is.
+            // It matters: a winner this device authored is a self-echo the merge skips, exactly
+            // as it would have been had the same row arrived through a pull.
+            var (_, originDeviceId) = ExtractVersionMetadata(result.AuthoritativePayloadJson);
+
+            return new RemoteChange
+            {
+                EntityType = queueEntry.EntityType ?? string.Empty,
+                EntityId = queueEntry.EntityId,
+                Operation = isDelete ? LocalDbService.SyncOperations.Delete : LocalDbService.SyncOperations.Update,
+                PayloadJson = result.AuthoritativePayloadJson,
+                Version = result.AuthoritativeVersion,
+                OriginDeviceId = originDeviceId
             };
         }
 

@@ -453,9 +453,176 @@ namespace WorkLedger.Tests
             Assert.Equal(serverTime, Assert.Single(_provider.ReceivedPullCursors));
         }
 
-        // WL-98: the remote won a conflict, so our copy is stale - and because a losing item
-        // performs no remote write, its timestamp is already behind our cursor and an
-        // incremental pull would never re-deliver it. Rewinding is what fetches the truth.
+        // WL-101: the remote won the conflict and handed the winner back, saying it is a live
+        // row. Adopting it settles the conflict in one merge - no cursor rewind, so no re-pull
+        // of the account's history.
+        [Fact]
+        public async Task RunSyncAsync_AdoptingAServerWinsUpdate_MergesItWithoutRewindingTheCursor()
+        {
+            _provider.ServerTime = DateTime.UtcNow;
+            await _orchestrator.RunSyncAsync();
+
+            var local = new Project { Name = "Local name" };
+            await _db.SaveProjectAsync(local);
+            var queuedId = Assert.Single(await _db.GetAllAsync<SyncQueue>()).Id;
+
+            _provider.PushResult = new SyncResult
+            {
+                RejectedSyncQueueIds = new List<int> { queuedId },
+                AuthoritativeChanges = new List<RemoteChange> { WinningProjectChange(local.SyncId, "Winner", version: 7) }
+            };
+
+            _provider.ReceivedPullCursors.Clear();
+            await _orchestrator.RunSyncAsync();
+
+            var merged = Assert.Single(await _db.GetAllAsync<Project>());
+            Assert.Equal("Winner", merged.Name);
+            // WL-99: a merge keeps the author's version and authorship - it is not a local edit.
+            Assert.Equal(7, merged.Version);
+            Assert.Equal(RemoteDeviceId, merged.OriginDeviceId);
+
+            // The point of the ticket: the cursor asked for the same window it would have
+            // anyway, rather than DateTime.MinValue.
+            Assert.Equal(_provider.ServerTime, Assert.Single(_provider.ReceivedPullCursors));
+            Assert.Equal(_provider.ServerTime, _orchestrator.LastSyncedAt);
+
+            // And nothing was re-queued: the rejected row is retired and pruned, and the merge
+            // itself enqueues nothing (WL-99).
+            Assert.Empty(await _db.GetAllAsync<SyncQueue>());
+        }
+
+        // The case the rewind existed for. A third device deleted the entity while this one
+        // pushed a stale update, so the winner handed back is a tombstone. Adopting its payload
+        // as an update would resurrect the row locally and permanently - the operation is what
+        // makes adoption safe at all.
+        [Fact]
+        public async Task RunSyncAsync_AdoptingAServerWinsTombstone_DeletesTheRowInsteadOfResurrectingIt()
+        {
+            _provider.ServerTime = DateTime.UtcNow;
+            await _orchestrator.RunSyncAsync();
+
+            var local = new Project { Name = "Local name" };
+            await _db.SaveProjectAsync(local);
+            var queuedId = Assert.Single(await _db.GetAllAsync<SyncQueue>()).Id;
+
+            var tombstone = WinningProjectChange(local.SyncId, "Local name", version: 7);
+            tombstone.Operation = "delete";
+
+            _provider.PushResult = new SyncResult
+            {
+                RejectedSyncQueueIds = new List<int> { queuedId },
+                AuthoritativeChanges = new List<RemoteChange> { tombstone }
+            };
+
+            _provider.ReceivedPullCursors.Clear();
+            await _orchestrator.RunSyncAsync();
+
+            Assert.Empty(await _db.GetAllAsync<Project>());
+            Assert.Equal(_provider.ServerTime, Assert.Single(_provider.ReceivedPullCursors));
+            Assert.Empty(await _db.GetAllAsync<SyncQueue>());
+        }
+
+        // A batch can carry both kinds of rejection at once - one winner that states its
+        // operation and one that doesn't. The self-describing one is merged; the other still
+        // gets its rewind, and the merged one isn't undone by the re-pull that follows.
+        [Fact]
+        public async Task RunSyncAsync_MixedRejections_AdoptsWhatItCanAndStillRewindsForTheRest()
+        {
+            _provider.ServerTime = DateTime.UtcNow;
+            await _orchestrator.RunSyncAsync();
+
+            var local = new Project { Name = "Local name" };
+            await _db.SaveProjectAsync(local);
+            var queuedId = Assert.Single(await _db.GetAllAsync<SyncQueue>()).Id;
+
+            _provider.PushResult = new SyncResult
+            {
+                RejectedSyncQueueIds = new List<int> { queuedId },
+                AuthoritativeChanges = new List<RemoteChange> { WinningProjectChange(local.SyncId, "Winner", version: 7) },
+                RequiresFullPull = true
+            };
+
+            _provider.ReceivedPullCursors.Clear();
+            await _orchestrator.RunSyncAsync();
+
+            Assert.Equal("Winner", Assert.Single(await _db.GetAllAsync<Project>()).Name);
+            Assert.Equal(DateTime.MinValue, Assert.Single(_provider.ReceivedPullCursors));
+        }
+
+        // A winner this device authored is a self-echo, skipped exactly as it would be had the
+        // same row arrived through a pull - the adoption path must not become a second, laxer
+        // way in. Reachable when a push was applied server-side but its ack never arrived.
+        [Fact]
+        public async Task RunSyncAsync_AdoptedWinnerAuthoredByThisDevice_IsSkippedAsSelfEcho()
+        {
+            var local = new Project { Name = "Local name" };
+            await _db.SaveProjectAsync(local);
+            var queuedId = Assert.Single(await _db.GetAllAsync<SyncQueue>()).Id;
+
+            var ownEcho = WinningProjectChange(local.SyncId, "Echoed back", version: 7);
+            ownEcho.OriginDeviceId = LocalDeviceId;
+
+            _provider.PushResult = new SyncResult
+            {
+                RejectedSyncQueueIds = new List<int> { queuedId },
+                AuthoritativeChanges = new List<RemoteChange> { ownEcho }
+            };
+
+            await _orchestrator.RunSyncAsync();
+
+            var unchanged = Assert.Single(await _db.GetAllAsync<Project>());
+            Assert.Equal("Local name", unchanged.Name);
+            Assert.Equal(local.Version, unchanged.Version);
+        }
+
+        // A winner the local row already beats loses the version comparison like any other
+        // remote change - adoption doesn't bypass last-write-wins.
+        [Fact]
+        public async Task RunSyncAsync_AdoptedWinnerLosingTheVersionComparison_LeavesTheLocalRowAlone()
+        {
+            var local = new Project { Name = "Local name" };
+            await _db.SaveProjectAsync(local);
+            await _db.SaveProjectAsync(local);
+            var queuedId = (await _db.GetAllAsync<SyncQueue>())[0].Id;
+
+            _provider.PushResult = new SyncResult
+            {
+                RejectedSyncQueueIds = new List<int> { queuedId },
+                AuthoritativeChanges = new List<RemoteChange>
+                {
+                    WinningProjectChange(local.SyncId, "Stale winner", version: local.Version - 1)
+                }
+            };
+
+            await _orchestrator.RunSyncAsync();
+
+            var unchanged = Assert.Single(await _db.GetAllAsync<Project>());
+            Assert.Equal("Local name", unchanged.Name);
+            Assert.Equal(local.Version, unchanged.Version);
+        }
+
+        // The shape ApiSyncProvider hands back for a server-wins rejection: the winner, keyed by
+        // the pushed row's SyncId, at the version the server reported.
+        private static RemoteChange WinningProjectChange(Guid syncId, string name, int version) => new()
+        {
+            EntityType = "project",
+            EntityId = syncId,
+            Operation = "update",
+            Version = version,
+            OriginDeviceId = RemoteDeviceId,
+            PayloadJson = ToPayload(new Project
+            {
+                Name = name,
+                SyncId = syncId,
+                Version = version,
+                OriginDeviceId = RemoteDeviceId
+            })
+        };
+
+        // WL-98/WL-101: the fallback, for a winner that arrived without its operation stated. Our
+        // copy is stale, and because a losing item performs no remote write, its timestamp is
+        // already behind our cursor and an incremental pull would never re-deliver it. Rewinding
+        // is what fetches the truth.
         [Fact]
         public async Task RunSyncAsync_WhenThePushReportsRequiresFullPull_RewindsTheCursorForThatPull()
         {

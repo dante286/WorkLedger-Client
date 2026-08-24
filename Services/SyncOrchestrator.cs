@@ -44,6 +44,12 @@ namespace WorkLedger_Client.Services
     // pass, and RelinkOrphanedChildrenAsync catches the rest when a child arrives ahead of
     // its parent.
     //
+    // WL-101: a pull is not the only source of remote changes. When a push is rejected because
+    // the remote's own row won, the provider hands that winner back on SyncResult, and it is
+    // merged here through the same MergeRemoteChangesAsync path a pulled change takes. Only a
+    // winner that arrives without its operation stated falls back to RequiresFullPull's cursor
+    // rewind.
+    //
     // WL-51: the merge has no undo, so an optional caller-supplied hook takes a safety backup
     // immediately before the first remote change of a run overwrites or deletes a local row.
     // See EnsurePreMergeBackupAsync for why it's once per run and why inserts don't count.
@@ -108,16 +114,24 @@ namespace WorkLedger_Client.Services
 
                 var push = await PushPendingChangesAsync();
 
-                // The remote won a conflict, so our copy of that entity is stale and the remote
-                // will not re-announce it (a losing item performs no remote write, precisely so
-                // it doesn't re-broadcast to every device - which also means its timestamp is
-                // already behind our cursor). Rewinding forces the next pull to re-deliver it,
-                // stating the operation rather than making us infer it from a payload. The
-                // version merge makes the extra changes cheap: everything already held loses its
-                // comparison and is discarded. See SyncResult.RequiresFullPull and WL-98.
+                // WL-101: the remote won these conflicts and handed the winners straight back,
+                // each stating whether it's a live row or a tombstone. That is everything the
+                // merge needs, so they go through the same path a pulled change takes and the
+                // conflict costs one merge instead of a re-pull of the account's history.
+                if (push.AuthoritativeChanges.Count > 0)
+                    await MergeRemoteChangesAsync(push.AuthoritativeChanges);
+
+                // The fallback, for a winner that arrived without its operation stated. Our copy
+                // of that entity is stale and the remote will not re-announce it (a losing item
+                // performs no remote write, precisely so it doesn't re-broadcast to every device
+                // - which also means its timestamp is already behind our cursor). Rewinding
+                // forces the next pull to re-deliver it, stating the operation rather than making
+                // us infer it from a payload. The version merge makes the extra changes cheap:
+                // everything already held loses its comparison and is discarded. See
+                // SyncResult.RequiresFullPull.
                 if (push.RequiresFullPull)
                 {
-                    Debug.WriteLine("Remote won a push conflict; rewinding the pull cursor for a full re-pull.");
+                    Debug.WriteLine("Remote won a push conflict without stating the operation; rewinding the pull cursor for a full re-pull.");
                     _lastSyncedAt = DateTime.MinValue;
                 }
 
@@ -131,7 +145,9 @@ namespace WorkLedger_Client.Services
                     Succeeded = pushFailure is null && pull.Succeeded,
                     ErrorMessage = pushFailure?.ErrorMessage ?? pull.ErrorMessage,
                     PushedCount = push.AcceptedSyncQueueIds.Count + push.RejectedSyncQueueIds.Count,
-                    ReceivedCount = pull.Changes.Count
+                    // Adopted push winners are remote changes this run merged too, so they count
+                    // as received - otherwise a run that resolved a conflict reports nothing.
+                    ReceivedCount = pull.Changes.Count + push.AuthoritativeChanges.Count
                 };
             }
             finally
@@ -186,16 +202,26 @@ namespace WorkLedger_Client.Services
                 return pull;
             }
 
-            foreach (var change in OrderParentsFirst(pull.Changes))
-                await ApplyRemoteChangeAsync(change);
-
-            await RelinkOrphanedChildrenAsync();
+            await MergeRemoteChangesAsync(pull.Changes);
 
             // WL-92: the provider's clock, not ours. A device running fast would otherwise
             // ask for changes since a moment the server hasn't reached and miss the window.
             _lastSyncedAt = pull.ServerTime;
             _cursorStore?.Save(_lastSyncedAt);
             return pull;
+        }
+
+        // The one way a remote change enters this database, whether it was pulled or handed back
+        // as the winner of a push conflict (WL-101). Keeping both on this method is the point:
+        // an adopted winner gets the parents-first ordering, the version comparison, the
+        // pre-merge backup and the orphan re-link pass, exactly as a pulled change does, and
+        // neither route can quietly grow behaviour the other lacks.
+        private async Task MergeRemoteChangesAsync(IEnumerable<RemoteChange> changes)
+        {
+            foreach (var change in OrderParentsFirst(changes))
+                await ApplyRemoteChangeAsync(change);
+
+            await RelinkOrphanedChildrenAsync();
         }
 
         // WL-91: a child's parent link is resolved from the parent's SyncId at merge time,

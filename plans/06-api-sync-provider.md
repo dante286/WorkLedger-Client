@@ -114,8 +114,9 @@ Two further items were found while building this and deliberately left out of sc
   `UpdateAsync` helpers rather than `SaveTimeEntryAsync`, so timer-produced entries get no `SyncQueue` row at
   all, no version stamping, and no parent-SyncId resolution. That is the app's primary time-entry path, so
   end-to-end API sync can't be demonstrated with timed work until it lands. Plan 03's boundary, not this one's.
-- **WL-98** — the tombstone ambiguity in `SyncItemResult` described under Scope 4. Since shipped
-  server-side and vendored (WL-100); consuming it client-side is **WL-101** (see the update under Scope 4).
+- **WL-98** — the tombstone ambiguity in `SyncItemResult` described under Scope 4. Shipped server-side,
+  vendored by **WL-100**, and consumed client-side by **WL-101** — all three are closed (see the update
+  under Scope 4).
 
 ## Scope
 
@@ -164,7 +165,9 @@ Two further items were found while building this and deliberately left out of sc
      winning record. Either apply it immediately or leave a clearly-marked seam for the orchestrator to do so
      — decide and document; do not silently drop it.
 
-     **Decided: neither — request a re-pull instead, because adopting it directly is unsafe.**
+     **Decided (revised by WL-101): apply it — but only because the server now says what the payload is.**
+     The original decision was to request a re-pull, for the reason set out below; it stands as the fallback
+     for a winner whose operation isn't stated.
      `SyncItemResult` has no field saying whether the winning row is a *tombstone*, and the payload DTOs carry
      no `IsDeleted` either. Reachable case: a third device deleted the entity (tombstone at v5) while this one
      pushes an update at v4 — `SyncService.ApplyUpsert`'s conflict branch hands back the tombstone's payload,
@@ -176,12 +179,16 @@ Two further items were found while building this and deliberately left out of sc
      `UpdatedAt` is already behind the cursor. Filed as **WL-98** to add an `AuthoritativeOperation` to the
      Contracts DTO and drop the rewind.
 
-     > **Update (2026-08-19):** WL-98's server half has shipped — `SyncItemResult.AuthoritativeOperation`
-     > (`"update"` / `"delete"`, null when there is no payload) is live and now vendored here. The client
-     > half is still open as **WL-101**: `MapPushResults` does not read it, so the rewind is still what happens. Adopting
-     > the payload directly using that field is a self-contained follow-up, and
-     > `PushAsync_ServerWinsCarryingAnAuthoritativeOperation_StillRetiresAndRePulls` pins today's behaviour
-     > for both `"update"` and `"delete"` so the change has a starting point to move off.
+     > **Update (2026-08-24, WL-101):** done, both halves. `SyncItemResult.AuthoritativeOperation`
+     > (`"update"` / `"delete"`, null when there is no payload) is live server-side, vendored here (WL-100),
+     > and now consumed: `MapPushResults` turns a rejection carrying both a payload and an operation into a
+     > `RemoteChange` on `SyncResult.AuthoritativeChanges`, and `SyncOrchestrator.MergeRemoteChangesAsync`
+     > applies it exactly as it applies a pulled change — same version comparison, same parents-first
+     > ordering, same pre-merge backup, same orphan re-link, and no re-queue (WL-99).
+     >
+     > The rewind survives as the fallback for a winner that arrives with no operation stated, or one this
+     > client doesn't recognize. Guessing there is the single unrecoverable mistake available, so it stays
+     > the safe default rather than being dropped.
    - `PullAsync(since)`: `GET {baseUrl}/sync/pull?since={since:o}`, map each `SyncChangeDto` → `RemoteChange`,
      and surface `ServerTime` for the cursor (WL-92).
    - **Failure handling remains the core requirement**: unreachable host, DNS failure, timeout, non-2xx,
