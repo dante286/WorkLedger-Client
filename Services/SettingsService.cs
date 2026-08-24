@@ -11,7 +11,7 @@ namespace WorkLedger_Client.Services
         // Kept in step with the tagged release by Release Please - the trailing annotation is
         // what its generic updater looks for, and release-please-config.json lists this file
         // under extra-files. Don't hand-edit it outside of a deliberate versioning reset.
-        public const string CurrentApplicationVersion = "0.1.0"; // x-release-please-version
+        public const string CurrentApplicationVersion = "0.2.0"; // x-release-please-version
 
         public string Theme { get; set; } = "System"; // "System", "Light", "Dark"
         public string DataDirectory { get; set; } = string.Empty;

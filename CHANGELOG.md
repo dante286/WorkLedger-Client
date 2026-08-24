@@ -13,6 +13,13 @@ existed, and their version numbers never described a shipped feature set. They a
 for provenance - the tags and their release assets still exist on GitHub - but nothing after
 this point continues their numbering.
 
+## [0.2.0](https://github.com/dante286/WorkLedger-Client/compare/v0.1.0...v0.2.0) (2026-08-24)
+
+
+### Features
+
+* **sync:** adopt the server's authoritative payload on a server-wins push (WL-101) ([#22](https://github.com/dante286/WorkLedger-Client/issues/22)) ([eabec70](https://github.com/dante286/WorkLedger-Client/commit/eabec709ef29f8fe80b45abc20e129888859567b))
+
 ## 0.1.0 (2026-08-21)
 
 
