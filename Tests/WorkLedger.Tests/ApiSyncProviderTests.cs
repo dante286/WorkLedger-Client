@@ -252,11 +252,49 @@ namespace WorkLedger.Tests
             Assert.Empty(result.Failures);
         }
 
-        // A rejection carrying an authoritative payload means the server's row won. The provider
-        // asks for a full re-pull rather than adopting the payload; WL-98's AuthoritativeOperation
-        // would make direct adoption safe, but it isn't consumed yet - see SyncResult.RequiresFullPull.
+        // WL-101: a rejection carrying an authoritative payload means the server's row won, and
+        // AuthoritativeOperation says what that payload is. Both cases are asserted separately
+        // because "delete" is the one this provider must never quietly turn into an update: the
+        // adopted change has to still be a delete when it reaches the merge.
+        [Theory]
+        [InlineData("update")]
+        [InlineData("delete")]
+        public async Task PushAsync_ServerWinsStatingTheOperation_AdoptsTheWinnerInsteadOfRePulling(string operation)
+        {
+            var entityId = Guid.NewGuid();
+            var payload = JsonSerializer.Serialize(
+                new { Version = 9, OriginDeviceId = "other-device", Name = "Winner" }, SyncJson.Options);
+            var handler = new RecordingHandler().EnqueueJson(HttpStatusCode.OK, PushResponse(
+                ItemResultWithOperation(
+                    entityId, accepted: false, version: 9, payload: payload,
+                    reason: "Server version wins.", operation: operation)));
+            var provider = CreateProvider(handler);
+
+            var result = await provider.PushAsync(new[] { QueueEntry(41, "project", entityId, "update", 4) });
+
+            // Retiring the row is unchanged - Accepted = false is final either way (WL-94).
+            Assert.Empty(result.AcceptedSyncQueueIds);
+            Assert.Equal(new[] { 41 }, result.RejectedSyncQueueIds);
+            Assert.False(result.RequiresFullPull);
+
+            var adopted = Assert.Single(result.AuthoritativeChanges);
+            Assert.Equal(operation, adopted.Operation);
+            // Taken from the queue row we pushed, since results are positional and
+            // SyncItemResult.EntityId is not a usable key (WL-94).
+            Assert.Equal("project", adopted.EntityType);
+            Assert.Equal(entityId, adopted.EntityId);
+            Assert.Equal(payload, adopted.PayloadJson);
+            // AuthoritativeVersion, not the payload's - for a tombstone the two differ (WL-93).
+            Assert.Equal(9, adopted.Version);
+            // Lifted out of the payload, so the merge can still recognise a self-echo.
+            Assert.Equal("other-device", adopted.OriginDeviceId);
+        }
+
+        // The fallback path. A server predating WL-98 sends the winning payload with no operation,
+        // and the payload alone cannot be told apart from a tombstone's - so the provider asks for
+        // the cursor rewind rather than guessing. See SyncResult.RequiresFullPull.
         [Fact]
-        public async Task PushAsync_WhenTheServerWinsAConflict_RetiresTheRowAndRequestsAFullPull()
+        public async Task PushAsync_ServerWinsWithoutStatingTheOperation_FallsBackToAFullPull()
         {
             var entityId = Guid.NewGuid();
             var handler = new RecordingHandler().EnqueueJson(HttpStatusCode.OK, PushResponse(
@@ -268,30 +306,27 @@ namespace WorkLedger.Tests
             Assert.Empty(result.AcceptedSyncQueueIds);
             Assert.Equal(new[] { 40 }, result.RejectedSyncQueueIds);
             Assert.True(result.RequiresFullPull);
+            Assert.Empty(result.AuthoritativeChanges);
         }
 
-        // The live server sends AuthoritativeOperation on every server-wins rejection. It is now
-        // part of the vendored contract but not yet consumed, so what matters here is that its
-        // presence changes nothing: the row is still retired and a re-pull still requested, whether
-        // the winner is a live row or a tombstone. Both cases, because "delete" is the one this
-        // provider must never quietly treat as an update.
-        [Theory]
-        [InlineData("update")]
-        [InlineData("delete")]
-        public async Task PushAsync_ServerWinsCarryingAnAuthoritativeOperation_StillRetiresAndRePulls(string operation)
+        // An operation this client doesn't recognize is the same situation as none at all - the
+        // payload is not self-describing to *us*, whatever the server meant by it - so it takes
+        // the same safe fallback rather than being adopted as an upsert.
+        [Fact]
+        public async Task PushAsync_ServerWinsStatingAnUnknownOperation_FallsBackToAFullPull()
         {
             var entityId = Guid.NewGuid();
             var handler = new RecordingHandler().EnqueueJson(HttpStatusCode.OK, PushResponse(
                 ItemResultWithOperation(
                     entityId, accepted: false, version: 9, payload: "{\"Version\":9}",
-                    reason: "Server version wins.", operation: operation)));
+                    reason: "Server version wins.", operation: "archive")));
             var provider = CreateProvider(handler);
 
-            var result = await provider.PushAsync(new[] { QueueEntry(41, "project", entityId, "update", 4) });
+            var result = await provider.PushAsync(new[] { QueueEntry(42, "project", entityId, "update", 4) });
 
-            Assert.Empty(result.AcceptedSyncQueueIds);
-            Assert.Equal(new[] { 41 }, result.RejectedSyncQueueIds);
+            Assert.Equal(new[] { 42 }, result.RejectedSyncQueueIds);
             Assert.True(result.RequiresFullPull);
+            Assert.Empty(result.AuthoritativeChanges);
         }
 
         // A validation failure carries no authoritative payload - the row is retired, but
@@ -308,6 +343,7 @@ namespace WorkLedger.Tests
 
             Assert.Equal(new[] { 41 }, result.RejectedSyncQueueIds);
             Assert.False(result.RequiresFullPull);
+            Assert.Empty(result.AuthoritativeChanges);
             Assert.Equal("EntityId (the entity's SyncId) is required.", Assert.Single(result.Failures).ErrorMessage);
         }
 

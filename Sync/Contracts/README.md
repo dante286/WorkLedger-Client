@@ -6,7 +6,8 @@ These files are **copies**, not originals. The source of truth is
 repo `main` was at `ced79aa`).
 
 Re-vendored 2026-08-19 from the previous pin (`3e6e955`) — WL-100. The only shape change since then was
-`SyncItemResult.AuthoritativeOperation` (WL-98) — see "What the server tells us on a rejection" below.
+`SyncItemResult.AuthoritativeOperation` (WL-98), consumed as of WL-101 — see "What the server tells us
+on a rejection" below.
 `ReportDtos.cs` is deliberately **not** vendored: the client computes its own local reports and never
 calls `/reports/*`.
 
@@ -46,11 +47,14 @@ tombstone's payload as an "update" resurrects a deleted entity locally and perma
 incremental pull corrects it — a losing push performs no server-side write, so the winner's
 `UpdatedAt` is already behind the client's cursor.
 
-`ApiSyncProvider` does not read the field yet: it still answers a server-wins rejection by setting
-`SyncResult.RequiresFullPull`, which rewinds the cursor so the next pull re-delivers the row and
-states its operation explicitly. That is correct but expensive — it re-pulls the account's history on
-every server-wins conflict. Consuming `AuthoritativeOperation` directly is the cheaper path and is
-tracked as **WL-101**; the field was vendored ahead of needing it for that reason.
+`ApiSyncProvider` reads the field (WL-101). A rejection carrying both a payload and an operation is
+turned into a `RemoteChange` on `SyncResult.AuthoritativeChanges`, which `SyncOrchestrator` merges
+through the same path a pulled change takes — so a conflict costs one merge.
+
+A payload arriving *without* an operation — a server predating WL-98, or an operation this client
+doesn't recognize — falls back to `SyncResult.RequiresFullPull`, which rewinds the cursor so the next
+pull re-delivers the row and states its operation explicitly. Correct, but it re-pulls the account's
+history, which is why it is now only the fallback.
 
 ## Replacing this folder with the real package
 

@@ -195,6 +195,31 @@ namespace WorkLedger.Tests
             Assert.Equal("Remote name", Assert.Single(await _db.GetAllAsync<Project>()).Name);
         }
 
+        // WL-101: a winner adopted from a rejected push overwrites local data just as a pulled
+        // change does, so it has to reach the same safety net. It does because it travels the
+        // same merge path - this is what pins that.
+        [Fact]
+        public async Task RunSyncAsync_AdoptedServerWinsUpdate_BacksUpBeforeApplyingIt()
+        {
+            var local = new Project { Name = "Local name" };
+            await _db.SaveProjectAsync(local);
+            var queuedId = (await _db.GetAllAsync<SyncQueue>())[0].Id;
+
+            _provider.PushResult = new SyncResult
+            {
+                RejectedSyncQueueIds = new List<int> { queuedId },
+                AuthoritativeChanges = new List<RemoteChange>
+                {
+                    ProjectChange(local.SyncId, "Remote name", local.Version + 1)
+                }
+            };
+
+            await _orchestrator.RunSyncAsync();
+
+            Assert.Equal("Local name", Assert.Single(_namesAtBackupTime));
+            Assert.Equal("Remote name", Assert.Single(await _db.GetAllAsync<Project>()).Name);
+        }
+
         private static RemoteChange ProjectChange(Guid syncId, string name, int version) => new()
         {
             EntityType = "project",

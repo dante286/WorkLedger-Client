@@ -20,24 +20,32 @@ namespace WorkLedger_Client.Sync
         // no" and "the remote couldn't be reached" are opposite instructions.
         public List<int> RejectedSyncQueueIds { get; init; } = new();
 
-        // Set when the remote rejected a change because its own row won, rather than
-        // because the payload was invalid. The orchestrator answers by rewinding its pull
-        // cursor so the next pull re-delivers the remote's authoritative state.
+        // WL-101: the winning rows the remote handed back when it rejected a change because
+        // its own copy won. The orchestrator merges these through exactly the path a pulled
+        // change takes, so a conflict costs one merge rather than a re-pull.
         //
-        // That indirection is conservative, not required. The server hands back the winning
-        // payload on rejection, and since WL-98 it also says what that payload *is* -
-        // SyncItemResult.AuthoritativeOperation is "update" for a live row and "delete" for a
-        // tombstone. The payload DTOs still carry no IsDeleted, so the operation field is the
-        // only thing that distinguishes them, and getting it wrong is unrecoverable:
-        // synthesizing an "update" from a tombstone resurrects a deleted row locally and
-        // permanently (reachable case - a third device deleted the entity at v5 while we push
-        // an update at v4).
+        // Adopting them is only safe because the remote states what each payload *is*: the
+        // payload DTOs carry no IsDeleted, so a payload on its own can't be told apart from a
+        // tombstone's, and synthesizing an "update" from a tombstone resurrects a deleted row
+        // locally and permanently (reachable case - a third device deleted the entity at v5
+        // while we push an update at v4). SyncItemResult.AuthoritativeOperation (WL-98) is what
+        // removes the guess; a winner that arrives without one falls back to RequiresFullPull.
         //
-        // Asking for a re-pull sidesteps the question entirely, because a pull always states
-        // the operation. Adopting AuthoritativeOperation directly would be cheaper and is the
-        // intended next step now that the field is vendored (WL-101); until then this stays a re-pull.
+        // These are merges, not local edits, so they keep the author's Version and
+        // OriginDeviceId and enqueue nothing - see SyncOrchestrator.WriteMergedAsync and WL-99.
+        public List<RemoteChange> AuthoritativeChanges { get; init; } = new();
+
+        // The fallback for a server-wins rejection that AuthoritativeChanges couldn't carry:
+        // the remote sent a winning payload but didn't say whether it's a live row or a
+        // tombstone (a server predating WL-98, or an operation this client doesn't recognize).
+        // The orchestrator answers by rewinding its pull cursor, because a pull always states
+        // the operation explicitly.
         //
-        // A plain re-pull isn't enough on its own: a losing item performs no write
+        // Correct but expensive - it re-pulls the account's whole history, and the version
+        // merge then discards everything already held - which is why the self-describing case
+        // above is now the normal path.
+        //
+        // A plain *incremental* re-pull isn't enough on its own: a losing item performs no write
         // server-side (deliberately - a write would restamp UpdatedAt and re-broadcast the
         // row to every device), so the winner's UpdatedAt is already behind our cursor and
         // an ordinary incremental pull would never re-deliver it.
