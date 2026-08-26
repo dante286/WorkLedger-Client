@@ -91,8 +91,23 @@ server-side before that code exists — see plan 8 item 4½.
 
 One hazard has no server-side counterpart and nothing else will catch it: the local SQLite database has **no
 user column**, so signing in as a different user against the same database pushes one user's rows into
-another's account. Unreachable while the server had a single seeded account; one typo in a login form
-afterwards. Plan 8 item 6 guards it; partitioning the database by user is a data-model plan of its own.
+another's account, irreversibly. Unreachable while the server had a single seeded account — the database had
+exactly one possible owner, so it needed no way to record one — and one typo in a login form afterwards.
+
+Plan 8 item 6 handles it, and **offline-first decides the shape of the fix**. The marker goes in a one-row
+`DatabaseOwner` table *inside* `workledger.db` rather than in `AppSettings`, because backup/restore, the
+data-directory move and the pre-merge backups all separate settings from the database, and a settings-based
+guard passes silently the moment they are. An unstamped database is adoptable by any account with **no prompt
+at all** — working offline for a week and then connecting is the product's core promise, not an edge case — and
+a mismatch is refused outright rather than confirmed, since no modal wording makes commingling two people's
+timesheets a reasonable thing to consent to. Sign-out is an auth event, never a data event.
+
+Two alternatives are ruled out in writing there so they don't resurface: **archive-and-wipe** on account change
+(what most apps do, and it inverts offline-first — empty app until a successful pull, nothing at all if the
+server is unreachable), and a **`UserId` column on every entity** (buys a cross-account local view nobody asked
+for, pays with a migration across the orchestrator's merge lookups). Per-account profiles —
+[WL-148](https://mnisan.atlassian.net/browse/WL-148) — are the wanted-case follow-up and deliberately not in
+this release.
 
 ## Cross-repo: the server
 

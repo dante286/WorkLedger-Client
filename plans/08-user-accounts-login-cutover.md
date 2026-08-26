@@ -9,7 +9,7 @@ to login*):
 | [WL-135](https://mnisan.atlassian.net/browse/WL-135) | 2 — `AppSettings`: `ApiEmail`, no stored password, secret out of the sync config |
 | [WL-134](https://mnisan.atlassian.net/browse/WL-134) | 3, 4 — `ApiSyncProvider` login, and the 401/423/429 policy |
 | [WL-137](https://mnisan.atlassian.net/browse/WL-137) | 5, 8 — `SyncCoordinator` messaging, `SyncContractGuardTests` |
-| [WL-138](https://mnisan.atlassian.net/browse/WL-138) | 6 — the different-user local-database guard |
+| [WL-138](https://mnisan.atlassian.net/browse/WL-138) | 6 — stamp the database with its owner, refuse a mismatch |
 | [WL-145](https://mnisan.atlassian.net/browse/WL-145) (subtask of [WL-136](https://mnisan.atlassian.net/browse/WL-136)) | 7 — the plain sign-in row |
 
 Server-side items this plan raised, tracked in the API's epic
@@ -249,24 +249,88 @@ not work around them here.**
   form; read as a transient sync failure it will be retried forever against a token that will never work again.
 - Delete the `_bootstrapSecret` field and its `BuildProvider` capture.
 
-### 6. Guard the local database against a change of user
+### 6. Stamp the database with its owner, and refuse a mismatch (WL-138)
 
 **This has no server-side counterpart and nothing else will catch it.** The local SQLite database has no user
 column — it holds *this install's* projects, tasks and entries, and every sync path keys off `SyncId` alone.
 Signing in as a different user against the same database therefore pushes user A's rows into user B's account
-and pulls B's rows into a database full of A's. Under S2's single seeded account this was unreachable; after S6
-it is one typo in a login form.
+and pulls B's rows into a database full of A's, with no column that could ever separate them again. Under S2's
+single seeded account this was unreachable, because the database had exactly one possible owner and so needed no
+way to record it. After S6 the owner is a variable, and it is one typo in a login form.
 
-Minimum viable guard, and it is genuinely minimal:
+**The ownership marker goes in the database, not in `AppSettings`.** The failure mode is settings and database
+becoming separated, and this app has three features that separate them: backup/restore
+(`RestoreFromDirectoryAsync`), the data-directory move (`BrowseDataDirectoryAsync`), and the pre-merge backups.
+A guard keyed on `AppSettings.ApiEmail` passes silently the moment a database is restored next to a different
+`settings.json` — which is a supported operation, not a corner case. A marker inside `workledger.db` travels
+with the rows through every one of those paths.
 
-- If `ApiEmail` is non-empty and the email being signed in with differs from it, and the local database holds
-  any rows, **refuse by default** and require an explicit confirmation that names what will happen. Reuse
-  `ConfirmationDialog`.
-- Include `ApiEmail` in `EnsureOrchestrator`'s `_builtForConfiguration` key
-  (`Services/SyncCoordinator.cs:178-183`) so a changed identity rebuilds the provider rather than reusing one
-  bound to the previous session.
-- Do **not** attempt to partition the local database by user. That is a data-model change (a `UserId` on every
-  entity, or a database file per account) and it is a plan of its own; note it as the follow-up.
+**6a. A fourth table, one row.** `DatabaseOwner`, created in `InitializeAsync` alongside the other three,
+recording: the `ApiEndpoint` it was claimed against, the server's `UserId`, the normalized email, and a
+`ClaimedAtUtc`. Add it as a *new* table, not as columns on the entity tables — no migration of `Project`,
+`TaskItem` or `TimeEntry`, and nothing in `LocalDbService`'s queries or the orchestrator's merge lookups
+changes.
+
+**6b. Identity comparison, and the one judgment call in it.** Treat *same account* as **matching normalized
+email and matching `UserId`**. Deliberately do **not** block on a changed `ApiEndpoint`: a server that moved
+from a LAN address to a domain name is common and legitimate, so record the latest endpoint and let a change
+through with a warning. The residual risk this accepts is a test server and a production server that both have
+the same email at the same `UserId` — plausible enough to warn about, rare enough not to block. Say so in a
+comment; a future reader will otherwise "tighten" it into false positives.
+
+**6c. No stamp means adoptable, and that path must be frictionless.** A database with no `DatabaseOwner` row is
+unclaimed, and any account may claim it. **This is the offline-first happy path** — work for a week with no
+server, then connect and push it all up — so it must not prompt, warn, or confirm anything. Write the stamp on
+the first successful sign-in.
+
+**6d. Migrating an existing install is a claim, not a guess.** A database that synced under the pre-S6
+single-account server has no stamp and no recoverable owner: `ApiEmail` is brand new and empty, and the old
+token is dead. So back-fill it as **claimed-by-unknown** (stamp present, identity blank) when
+`LastSyncedAtUtc` is non-null, and let the first post-upgrade sign-in fill in the identity. This is the same
+shape as the server's own `POST /auth/claim` — an existing body of data taking on an owner for the first time —
+and pointing that out in the comment is the cheapest way to make it obvious rather than arbitrary. Follow
+`InitializeAsync`'s existing idempotent-backfill pattern, and heed the caveat documented there: detection must
+go through raw SQL against the column, because `sqlite-net` leaves a mapped property at its C# initializer
+value when the column is SQL `NULL`.
+
+**6e. The `SyncQueue` needs the same guard as the tables.** This is the one that gets missed. Pending queue rows
+are addressed to whichever account they were authored under; guard the entity tables but not the queue and the
+first push after a switch leaks one user's work into another's account anyway. The stamp covers the whole
+database file, queue included — so state that it does, rather than leaving it to be inferred.
+
+**6f. Reset the cursor whenever the owner changes.** `LastSyncedAtUtc` is account-scoped state living in a
+global field. Carrying it across an ownership change makes the new account's first pull start from an instant
+that means nothing to it, silently skipping history. Null it on adoption. (`ApiToken` and
+`ApiTokenExpiresAtUtc` are account-scoped in the same way and are already cleared by `SignOut`.)
+
+**6g. On a mismatch, refuse.** Not "confirm and proceed" — there is no confirmation wording that makes
+irreversible commingling a reasonable thing for a user to consent to in a modal. Explain what was found, name
+both accounts, and point at the remedy that already exists: a separate data directory via the Settings tab's
+data-directory picker, which is a manual version of the per-account profiles filed as the follow-up below.
+Include `ApiEmail` in `EnsureOrchestrator`'s `_builtForConfiguration` key
+(`Services/SyncCoordinator.cs:178-183`) so a changed identity rebuilds the provider rather than reusing one
+bound to the previous session.
+
+**6h. Sign-out is a no-op for data.** Clear the token; keep the email, the database, the pending queue, the
+cursor, and the stamp. The app has to stay fully usable with no server — that is the whole premise — so
+sign-out is an auth event, never a data event.
+
+**Two designs ruled out, in writing, so they don't come back:**
+
+- **Archive-and-wipe on account change** (back up, clear the database, pull the new account's data down).
+  This **inverts offline-first**: between sign-in and a successful pull the app is empty, an unreachable server
+  leaves the user with nothing, and signing back into the first account doesn't restore their work — it sits in
+  a backup folder they have to find by hand. It makes the server authoritative over local data, which is the
+  one thing this codebase has spent seven plans not doing. It is also what most apps do, which is exactly why
+  it needs to be refused explicitly.
+- **A `UserId` column on every entity.** The textbook answer and the wrong trade here: it buys a unified
+  cross-account local view nobody has asked for, and pays for it with a migration across `LocalDbService`,
+  `ReportsService` and the orchestrator's merge lookups — the most load-bearing and most-tested code in the
+  repo. Per-account *profiles* (the follow-up) get identical safety with the churn confined to path resolution.
+
+**Follow-up, filed not built: [WL-148](https://mnisan.atlassian.net/browse/WL-148)** — one database per
+account under `<dataDir>/profiles/`, which turns the manual data-directory remedy above into a supported
+feature and gives the account-scoped settings a home. Out of scope here.
 
 ### 7. Sign-in UI — the plain half of WL-136
 
@@ -304,8 +368,22 @@ form. That is Plan 9, and it is the difference between "works" and "good".
 - `SessionExpired` is reached from a past `ApiTokenExpiresAtUtc` with **no** request made at all.
 - `AuthenticationRequired` survives the trip out through `SyncOrchestrator` to `SyncRunResult`.
 - Everything that made this provider total stays total: unreachable host, non-2xx, malformed JSON.
-- `SyncCoordinatorTests`: sign-in without an endpoint asks for one; a different-email sign-in against a
-  non-empty database is refused without the confirmation; `SignOut` clears the token and keeps the email.
+- `SyncCoordinatorTests`: sign-in without an endpoint asks for one; `SignOut` clears the token and keeps the
+  email, the database, the queue and the cursor (6h).
+- **Ownership (WL-138), in `LocalDbServiceTests` and `SyncCoordinatorTests`:**
+  - An unstamped database is adopted on first sign-in with **no prompt at all**, and the stamp is written (6c).
+    This is the offline-first path; assert the absence of friction, not just the presence of the stamp.
+  - A mismatched account is refused, and **nothing** is written: no rows, no queue changes, no stamp update,
+    no token stored.
+  - Same email + same `UserId` against a **different** endpoint is allowed, warns, and updates the recorded
+    endpoint (6b).
+  - A database restored from a backup carries its stamp with it — construct the case by copying a stamped db
+    file next to a *blank* `settings.json` and asserting the mismatch is still caught. **This is the test that
+    justifies putting the marker in the database rather than in settings**, so name it for that.
+  - The pre-S6 backfill: a database with rows and a non-null `LastSyncedAtUtc` but no stamp comes up as
+    claimed-by-unknown, and the next sign-in fills in the identity (6d). Assert through raw SQL, per
+    `InitializeAsync`'s documented `sqlite-net`/NULL caveat.
+  - Adoption nulls `LastSyncedAtUtc` (6f).
 - **`SyncContractGuardTests` (WL-137)** — the cross-repo drift guard, and the reason a botched re-vendor fails
   the build instead of the sync. Keep every existing assertion (the entity-type/operation constants, the
   three "every field populated" payload tests, both PascalCase round-trips) — they are what pins "the sync wire
@@ -362,7 +440,13 @@ form. That is Plan 9, and it is the difference between "works" and "good".
 - The signed-out condition is persistent UI state, toasted once on transition rather than once per tick.
 - A revoked token reaches the UI as "you have been signed out", distinguishable from "sync is misconfigured"
   and from "the server is unreachable".
-- Signing in as a different email against a non-empty local database is refused without explicit confirmation.
+- The local database records its own owner in a `DatabaseOwner` row, so the guard survives a backup/restore, a
+  data-directory move, and a lost `settings.json` — proven by a test that pairs a stamped database with a blank
+  settings file.
+- An unclaimed database is adopted on first sign-in with no prompt; a mismatched account is refused outright and
+  leaves every local row, queue row and setting untouched.
+- Signing out clears the token and nothing else: the database, the pending queue, the cursor and the stamp all
+  survive, and the app stays fully usable with no server.
 - `SyncContractGuardTests` passes, still asserting the sync wire format is what it was before S6.
 - Full suite green, still with no real network calls.
 
@@ -408,9 +492,18 @@ before the code chased it.
 > request ever reaches `/auth/login`. In `SyncCoordinator`, turn `RegisterDeviceAsync` into
 > `SignInAsync(email, password)` plus a `SignOut()` that keeps the email, fix
 > `DescribeConfigurationProblem`'s "Register this device first.", and distinguish "not signed in" from "signed in
-> but revoked". Guard the local database against a change of user: the SQLite file has no user column, so signing
-> in as a different email would push one user's rows into another's account — refuse it by default when local
-> rows exist unless explicitly confirmed, and include the email in `EnsureOrchestrator`'s configuration key. In
+> but revoked". Guard the local database against a change of user (item 6): the SQLite file has no user column, so
+> signing in as a different email would push one user's rows into another's account irreversibly. Record the owner
+> in a new one-row `DatabaseOwner` table **inside `workledger.db`**, not in `AppSettings` — a settings-based guard
+> is defeated by backup/restore and the data-directory move, both of which are supported operations — comparing
+> normalized email plus `UserId` and warning rather than blocking on a changed endpoint. An unstamped database is
+> adopted on first sign-in with no prompt whatsoever (that is the offline-first path: work for a week offline,
+> then connect); a mismatch is **refused**, not confirmed, pointing at the data-directory picker as the remedy;
+> a pre-S6 database that has synced but has no stamp back-fills as claimed-by-unknown for the next sign-in to
+> claim; adoption nulls `LastSyncedAtUtc`, which is account-scoped state in a global field. Sign-out clears the
+> token and nothing else. Do **not** wipe-and-pull on an account change and do **not** add a `UserId` column to
+> the entity tables — both are ruled out in item 6 with reasons. Include the email in `EnsureOrchestrator`'s
+> configuration key. In
 > the UI, replace only the bootstrap-secret/register row in `Views/MainWindow.axaml` with a plain
 > email/password/Sign in/Sign out row and repoint the status text; leave `/auth/capabilities`, the registration
 > form and "Claim this server" to Plan 9. Update `ApiSyncProviderTests`' `RecordingHandler` plumbing, add the
