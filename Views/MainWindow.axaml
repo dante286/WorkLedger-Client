@@ -1,4 +1,4 @@
-<Window xmlns="https://github.com/avaloniaui"
+﻿<Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:WorkLedger_Client.ViewModels"
         xmlns:models="using:WorkLedger_Client.Models"
@@ -688,7 +688,12 @@
                         </Button>
                     </StackPanel>
 
-                    <!-- API sync: endpoint, then a one-off device registration against it. -->
+                    <!-- API sync: endpoint, then signing in against it. WL-145.
+
+                         Deliberately only a sign-in: registration, "Claim this server" and the
+                         /auth/capabilities probe that decides whether to show either are plan 9.
+                         Enrolling this device is a side effect of signing in, server-side, so
+                         there is nothing else for a new install to do here. -->
                     <StackPanel Spacing="{DynamicResource SpacingLarge}" IsVisible="{Binding IsApiSyncSelected}">
                         <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
                             <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">API Endpoint</TextBlock>
@@ -696,13 +701,22 @@
                         </StackPanel>
 
                         <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
-                            <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Bootstrap Secret</TextBlock>
-                            <TextBox Width="240" PasswordChar="•" Text="{Binding BootstrapSecret, Mode=TwoWay}" />
-                            <Button Margin="8,0,0,0" Command="{Binding RegisterDeviceCommand}"
+                            <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Email</TextBlock>
+                            <TextBox Width="240" Text="{Binding ApiEmail, Mode=TwoWay}" Watermark="you@example.com" />
+                            <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="8,0,8,0">Password</TextBlock>
+                            <TextBox Width="180" PasswordChar="•" Text="{Binding ApiPassword, Mode=TwoWay}" />
+                            <Button Margin="8,0,0,0" Command="{Binding SignInCommand}"
                                     Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
                                     FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
                                     VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
-                                <TextBlock Text="Register this device" />
+                                <TextBlock Text="Sign in" />
+                            </Button>
+                            <Button Margin="4,0,0,0" Command="{Binding SignOutCommand}"
+                                    IsVisible="{Binding !IsSignedOutOfApi}"
+                                    Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
+                                    FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
+                                    VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
+                                <TextBlock Text="Sign out" />
                             </Button>
                         </StackPanel>
 

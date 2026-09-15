@@ -53,6 +53,11 @@ namespace WorkLedger_Client.Services
             await _db.CreateTableAsync<TimeEntry>();
             await _db.CreateTableAsync<SyncQueue>();
 
+            // WL-138. Created empty; an empty DatabaseOwner table is the "unclaimed" state, which
+            // is the correct and frictionless starting point for every install that has never
+            // signed in. Nothing writes a row until a sign-in succeeds.
+            await _db.CreateTableAsync<DatabaseOwner>();
+
             await BackfillVersioningAsync<Project>();
             await BackfillVersioningAsync<TaskItem>();
             await BackfillVersioningAsync<TimeEntry>();
@@ -66,6 +71,92 @@ namespace WorkLedger_Client.Services
             await BackfillParentSyncIdsAsync("TaskItem", "ProjectSyncId", "Project", "ProjectId");
             await BackfillParentSyncIdsAsync("TimeEntry", "TaskSyncId", "TaskItem", "TaskItemId");
         }
+
+        /// <summary>
+        /// WL-138, plan 8 item 6d. Records that this database has synced under the pre-S6
+        /// single-account server, without being able to say to whom.
+        /// </summary>
+        /// <remarks>
+        /// Such a database has no stamp and no recoverable owner: <c>ApiEmail</c> is brand new and
+        /// empty, and the old device token is dead. Leaving it indistinguishable from a
+        /// never-synced one would lose the one fact worth keeping - that this body of data already
+        /// has a history with a server - so it is stamped as claimed-by-unknown and the first
+        /// post-upgrade sign-in fills in the identity.
+        /// <para>
+        /// That is exactly the shape of the server's own <c>POST /auth/claim</c>: an existing body
+        /// of data taking on an owner for the first time. Saying so is the cheapest way to make
+        /// this look deliberate rather than arbitrary.
+        /// </para>
+        /// <para>
+        /// Idempotent, and a no-write no-op once any stamp exists - including one this wrote. The
+        /// "has synced" fact lives in <c>AppSettings.LastSyncedAtUtc</c>, which this type cannot
+        /// see, so the caller passes it in rather than this guessing from the data.
+        /// </para>
+        /// </remarks>
+        public async Task BackfillDatabaseOwnerAsync(bool hasSyncedBefore)
+        {
+            if (!hasSyncedBefore)
+                return;
+
+            if (await GetDatabaseOwnerAsync() != null)
+                return;
+
+            await _db.InsertOrReplaceAsync(new DatabaseOwner
+            {
+                Id = DatabaseOwner.SingletonId,
+                UserId = null,
+                Email = null,
+                ApiEndpoint = null,
+                ClaimedAtUtc = DateTime.UtcNow
+            });
+        }
+
+        /// <summary>
+        /// The ownership stamp, or null when this database has never been claimed.
+        /// </summary>
+        public Task<DatabaseOwner?> GetDatabaseOwnerAsync()
+            => _db.Table<DatabaseOwner>().FirstOrDefaultAsync()!;
+
+        /// <summary>
+        /// WL-138: whether <paramref name="userId"/>/<paramref name="email"/> may sync against this
+        /// database. Reads only - the caller decides what to do about the answer.
+        /// </summary>
+        public async Task<DatabaseOwnershipVerdict> EvaluateOwnershipAsync(int userId, string? email, string? apiEndpoint)
+        {
+            var owner = await GetDatabaseOwnerAsync();
+
+            // No stamp at all, or a claimed-by-unknown one waiting for its identity. Both are
+            // adoptable by anyone, with no prompt: the first is the offline-first path and the
+            // second is a pre-S6 install being claimed for the first time.
+            if (owner is null || !owner.HasIdentity)
+                return DatabaseOwnershipVerdict.Unclaimed;
+
+            if (!owner.IsSameAccount(userId, email))
+                return DatabaseOwnershipVerdict.DifferentAccount;
+
+            return string.Equals(owner.ApiEndpoint, apiEndpoint, StringComparison.OrdinalIgnoreCase)
+                ? DatabaseOwnershipVerdict.SameAccount
+                : DatabaseOwnershipVerdict.EndpointChanged;
+        }
+
+        /// <summary>
+        /// WL-138: stamps this database as belonging to <paramref name="userId"/>. Idempotent, and
+        /// the one writer of the stamp.
+        /// </summary>
+        /// <remarks>
+        /// Call only after <see cref="EvaluateOwnershipAsync"/> has said yes - this overwrites
+        /// whatever was there, which is what re-recording a moved endpoint needs and what a
+        /// mismatch must never be allowed to do.
+        /// </remarks>
+        public Task<int> ClaimDatabaseAsync(int userId, string? email, string? apiEndpoint)
+            => _db.InsertOrReplaceAsync(new DatabaseOwner
+            {
+                Id = DatabaseOwner.SingletonId,
+                UserId = userId,
+                Email = DatabaseOwner.NormalizeEmail(email),
+                ApiEndpoint = apiEndpoint,
+                ClaimedAtUtc = DateTime.UtcNow
+            });
 
         // sqlite-net-pcl's CreateTableAsync adds missing columns to an existing table via
         // ALTER TABLE, but leaves pre-existing rows with Version as SQL NULL rather than the

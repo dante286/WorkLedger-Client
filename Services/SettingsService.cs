@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -20,21 +20,44 @@ namespace WorkLedger_Client.Services
         public BackupInterval BackupInterval { get; set; } = BackupInterval.Disabled;
         public bool BackupOnClose { get; set; } = false;
         // Stable per-install identifier, minted at first run. This is also the DeviceId
-        // ApiSyncProvider registers with the server and the OriginDeviceId stamped on every
-        // row this install writes - there is deliberately only one of these.
+        // ApiSyncProvider signs in with and the OriginDeviceId stamped on every row this
+        // install writes - there is deliberately only one of these.
+        //
+        // Note the server keys device rows by (UserId, DeviceId), so the same value under a
+        // different user is a different device and inherits nothing from the old one.
         public string DeviceId { get; set; } = string.Empty;
         public string SyncFolderPath { get; set; } = string.Empty;
 
         // Base URL of the WorkLedger-API instance, e.g. "https://workledger.example.com".
         public string ApiEndpoint { get; set; } = string.Empty;
 
-        // The JWT the *server* issued to this device via POST /auth/register-device - not a
-        // hand-entered secret. Persisted so a restart doesn't force a re-bootstrap.
+        // WL-135: the signed-in identity - prefill for the sign-in form, and the "signed in as"
+        // the settings screen shows. Kept across a sign-out on purpose, so signing back in is
+        // one field rather than two.
+        //
+        // The password is deliberately NOT here, and deliberately nowhere else either. DPAPI is
+        // Windows-only and this ships three RIDs; a keyring is a dependency and a packaging
+        // problem for a self-contained single-file publish; and "encrypted" next to its own key
+        // is just obfuscation. Tokens last Jwt:ExpiryDays (365 by default), so "sign in once a
+        // year, or when you've been signed out" is an honest cost. If an OS credential store is
+        // wanted later it implements ApiSyncProvider's Func<ApiCredentials?> accessor and
+        // nothing else changes - and Invariant L still bounds it to one unattended failed
+        // attempt per credential, so remembering one cannot reintroduce the lockout storm.
+        public string ApiEmail { get; set; } = string.Empty;
+
+        // The JWT the *server* issued to this (user, device) pair via POST /auth/login - not a
+        // hand-entered secret. Persisted so a restart doesn't force a fresh sign-in.
         public string ApiToken { get; set; } = string.Empty;
 
-        // From RegisterDeviceResponse.ExpiresAtUtc, so the provider can re-bootstrap ahead of
-        // expiry instead of discovering it as a 401 mid-sync. Nullable: "never bootstrapped"
-        // and "expired long ago" are different states and DateTime.MinValue conflates them.
+        // From LoginResponse.ExpiresAtUtc. Lets the app reach "your session has expired" without
+        // making a request at all, which is what a year-idle install deserves instead of a
+        // failed sync. Nullable: "never signed in" and "expired long ago" are different states
+        // and DateTime.MinValue conflates them.
+        //
+        // Note this is an upper bound, not a guarantee: since the server's S7 the token also
+        // carries a security stamp, so a password change, a sign-out-everywhere, or this device
+        // being removed from another machine kills it well before this instant. That arrives as
+        // a 401 and is handled as a revocation - see ApiSyncProvider.
         public DateTime? ApiTokenExpiresAtUtc { get; set; }
 
         // WL-92: the pull cursor, persisted so it survives a restart, and holding the value
@@ -73,7 +96,8 @@ namespace WorkLedger_Client.Services
         // FileSyncProvider over AppSettings.SyncFolderPath - a shared folder, no backend.
         File = 1,
 
-        // ApiSyncProvider against AppSettings.ApiEndpoint, using the device-bootstrapped JWT.
+        // ApiSyncProvider against AppSettings.ApiEndpoint, using the JWT POST /auth/login
+        // issued to this (user, device) pair.
         Api = 2
     }
 
@@ -253,6 +277,14 @@ namespace WorkLedger_Client.Services
                 if (string.IsNullOrWhiteSpace(settings.ApiToken))
                 {
                     settings.ApiToken = string.Empty;
+                    SaveSettings(settings);
+                }
+
+                // WL-135. New in the login cutover, so every settings.json written before it
+                // lacks the key entirely.
+                if (string.IsNullOrWhiteSpace(settings.ApiEmail))
+                {
+                    settings.ApiEmail = string.Empty;
                     SaveSettings(settings);
                 }
 

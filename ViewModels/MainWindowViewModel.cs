@@ -161,6 +161,7 @@ namespace WorkLedger_Client.ViewModels
             SyncInterval = settings.SyncInterval;
             PreMergeBackupMode = settings.PreMergeBackupMode;
             ApiEndpoint = settings.ApiEndpoint ?? string.Empty;
+            ApiEmail = settings.ApiEmail ?? string.Empty;
             DeviceId = settings.DeviceId ?? string.Empty;
             ApplicationVersion = string.IsNullOrWhiteSpace(settings.ApplicationVersion)
                 ? WorkLedger_Client.Services.AppSettings.CurrentApplicationVersion
@@ -215,6 +216,9 @@ namespace WorkLedger_Client.ViewModels
             _settings.SyncInterval = SyncInterval;
             _settings.PreMergeBackupMode = PreMergeBackupMode;
             _settings.ApiEndpoint = ApiEndpoint;
+            // WL-135. The password is deliberately absent - there is no AppSettings field for it
+            // and there must not be one.
+            _settings.ApiEmail = ApiEmail;
             _settings.ApplicationVersion = ApplicationVersion;
 
             _settingsService.SaveSettings(_settings);
@@ -304,6 +308,11 @@ namespace WorkLedger_Client.ViewModels
         }
 
         partial void OnApiEndpointChanged(string value)
+        {
+            TriggerAutosave();
+        }
+
+        partial void OnApiEmailChanged(string value)
         {
             TriggerAutosave();
         }

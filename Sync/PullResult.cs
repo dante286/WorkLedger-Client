@@ -26,10 +26,15 @@ namespace WorkLedger_Client.Sync
 
         public string? ErrorMessage { get; init; }
 
-        public static PullResult Failed(string errorMessage) => new()
+        // WL-134: the pull failed for lack of a usable session rather than for anything the
+        // next tick could fix on its own. See SyncResult.AuthenticationRequired.
+        public bool AuthenticationRequired { get; init; }
+
+        public static PullResult Failed(string errorMessage, bool authenticationRequired = false) => new()
         {
             Succeeded = false,
-            ErrorMessage = errorMessage
+            ErrorMessage = errorMessage,
+            AuthenticationRequired = authenticationRequired
         };
     }
 }

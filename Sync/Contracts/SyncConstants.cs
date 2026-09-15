@@ -1,4 +1,4 @@
-// Vendored verbatim from WorkLedger-API, src/WorkLedger.Contracts/Sync/SyncConstants.cs @ 2065662.
+// Vendored verbatim from WorkLedger-API, src/WorkLedger.Contracts/Sync/SyncConstants.cs @ 3d27c86.
 // The server is the source of truth for these shapes - see Sync/Contracts/README.md before editing.
 namespace WorkLedger.Contracts.Sync;
 
@@ -18,7 +18,7 @@ public static class SyncEntityTypes
 /// <summary>
 /// Wire values for <see cref="SyncChangeDto.Operation"/>, fixed by the client's
 /// LocalDbService.SyncOperations. Note the server treats Create and Update identically — what
-/// decides insert-vs-update is whether a row already exists for (AccountId, SyncId), not the label
+/// decides insert-vs-update is whether a row already exists for (UserId, SyncId), not the label
 /// the client attached, because the two sides can disagree about which device saw the entity first.
 /// </summary>
 public static class SyncOperations

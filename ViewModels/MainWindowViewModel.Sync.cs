@@ -52,20 +52,41 @@ namespace WorkLedger_Client.ViewModels
         [ObservableProperty]
         private string _deviceId = string.Empty;
 
-        // Operator-supplied, used once by RegisterDeviceCommand, deliberately never persisted -
-        // it's the gate on POST /auth/register-device, not this device's credential. Note the
-        // absence of an autosave hook: PersistSettings has nothing to write for it.
+        // WL-135: the signed-in identity. This one IS persisted - it prefills the form and is the
+        // "signed in as" the panel shows - and it survives a sign-out on purpose.
         [ObservableProperty]
-        private string _bootstrapSecret = string.Empty;
+        private string _apiEmail = string.Empty;
+
+        // WL-135: used once by SignInCommand and cleared the instant the call returns, success or
+        // failure. Never persisted anywhere - note the absence of an autosave hook, and see
+        // AppSettings.ApiEmail for why storing it was considered and rejected for v1.
+        [ObservableProperty]
+        private string _apiPassword = string.Empty;
 
         [ObservableProperty]
         private string _lastSyncedDisplay = "Never";
 
         [ObservableProperty]
-        private string _apiTokenStatus = "Not registered";
+        private string _apiTokenStatus = "Not signed in";
+
+        // WL-134 item 4e: the signed-out condition is persistent UI state, not an event. A skipped
+        // run every 15 minutes is 96 a day, and toasting each one is 96 toasts - a correct design
+        // that users would switch off. The toast fires only on the TRANSITION into it, tracked by
+        // _lastAuthenticationRequired below; this is what stays on screen in between.
+        [ObservableProperty]
+        private bool _isSignedOutOfApi;
 
         [ObservableProperty]
         private bool _isSyncing;
+
+        // The previous value of IsSignedOutOfApi, so a toast can fire on the edge rather than the
+        // level. Deliberately plain fields: they are not bound to anything and should not be.
+        private bool _lastAuthenticationRequired;
+
+        // Launching into a signed-out state is not a transition into one. Without this, an install
+        // configured for Api sync greets the user with a toast on every start, which is the
+        // behaviour item 4e exists to avoid - just once a session instead of once a tick.
+        private bool _authStateObserved;
 
         public bool IsFileSyncSelected => SyncMode == SyncMode.File;
 
@@ -93,6 +114,14 @@ namespace WorkLedger_Client.ViewModels
                 {
                     _toastService?.ShowToast("A sync is already running", 1600);
                 }
+                else if (result.AuthenticationRequired)
+                {
+                    // Already carries the coordinator's specific wording - signed out, expired,
+                    // revoked, locked out or rate-limited - so it is shown as-is rather than
+                    // wrapped in "Sync failed", which is the framing that sends people looking for
+                    // a network problem they don't have.
+                    _toastService?.ShowToast(result.ErrorMessage ?? "Sign in to sync.", 4000);
+                }
                 else if (!result.Succeeded)
                 {
                     _toastService?.ShowToast($"Sync failed: {result.ErrorMessage}", 3500);
@@ -115,21 +144,39 @@ namespace WorkLedger_Client.ViewModels
         }
 
         [RelayCommand]
-        private async Task RegisterDeviceAsync()
+        private async Task SignInAsync()
         {
-            // The endpoint the user just typed is what they expect to register against.
+            // The endpoint and email the user just typed are what they expect to sign in with.
             PersistSettings();
 
-            var (success, message) = await _syncCoordinator.RegisterDeviceAsync(BootstrapSecret);
+            var password = ApiPassword;
+
+            // Cleared before the await, not after it: the field is bound to a control the user can
+            // still see, and there is no outcome - success, wrong password, unreachable server -
+            // in which leaving the password sitting in it is the right answer.
+            ApiPassword = string.Empty;
+
+            var (success, message) = await _syncCoordinator.SignInAsync(ApiEmail, password);
             if (success)
             {
-                // Held only for the round trip. Clearing it is what makes "prefer not
-                // persisting it" true in practice rather than only in the settings file.
-                BootstrapSecret = string.Empty;
+                // The coordinator normalizes and persists the address the server actually
+                // recognized, which may differ in case from what was typed.
+                ApiEmail = _settings.ApiEmail;
             }
 
             RefreshSyncStatus();
-            _toastService?.ShowToast(message, success ? 3000 : 4000);
+            _toastService?.ShowToast(message, success ? 3000 : 5000);
+        }
+
+        [RelayCommand]
+        private void SignOut()
+        {
+            // WL-138 item 6h: an auth event, never a data event. The database, the pending queue,
+            // the cursor and the ownership stamp all survive - the app has to stay fully usable
+            // with no server, so signing out is not a request to stop working.
+            _syncCoordinator.SignOut();
+            RefreshSyncStatus();
+            _toastService?.ShowToast("Signed out. Your work stays on this device.", 3000);
         }
 
         // Re-reads the display-only sync state out of the live AppSettings. Cheap enough to
@@ -140,11 +187,31 @@ namespace WorkLedger_Client.ViewModels
                 ? lastSynced.ToLocalTime().ToString("g")
                 : "Never";
 
-            ApiTokenStatus = string.IsNullOrWhiteSpace(_settings.ApiToken)
-                ? "Not registered"
-                : _settings.ApiTokenExpiresAtUtc is { } expiry
-                    ? $"Registered · token valid until {expiry.ToLocalTime():g}"
-                    : "Registered";
+            var auth = _syncCoordinator.ApiAuth;
+            IsSignedOutOfApi = !auth.CanSync;
+
+            ApiTokenStatus = auth.CanSync
+                ? DescribeSignedIn()
+                : _syncCoordinator.DescribeAuthState();
+
+            // WL-134 item 4e: fire on the edge, not the level.
+            if (_authStateObserved && IsSignedOutOfApi && !_lastAuthenticationRequired && _settings.SyncMode == SyncMode.Api)
+                _toastService?.ShowToast(ApiTokenStatus, 4000);
+
+            _lastAuthenticationRequired = IsSignedOutOfApi;
+            _authStateObserved = true;
+        }
+
+        private string DescribeSignedIn()
+        {
+            var who = string.IsNullOrWhiteSpace(_settings.ApiEmail) ? "Signed in" : $"Signed in as {_settings.ApiEmail}";
+
+            // The expiry is an upper bound rather than a promise - the server can revoke the token
+            // long before it - so it is shown as context next to who is signed in, not as a
+            // countdown to anything the user has to act on.
+            return _settings.ApiTokenExpiresAtUtc is { } expiry
+                ? $"{who} · session valid until {expiry.ToLocalTime():g}"
+                : who;
         }
 
         // Fires on the sync timer's thread, not the UI's, so everything it touches is posted

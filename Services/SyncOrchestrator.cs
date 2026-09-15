@@ -53,6 +53,13 @@ namespace WorkLedger_Client.Services
     // WL-51: the merge has no undo, so an optional caller-supplied hook takes a safety backup
     // immediately before the first remote change of a run overwrites or deletes a local row.
     // See EnsurePreMergeBackupAsync for why it's once per run and why inserts don't count.
+    //
+    // WL-134 (plan 8 item 4d): the TIMER path asks the provider whether there is a usable session
+    // before doing anything, and skips the whole run when there isn't. A revoked install would
+    // otherwise generate a doomed round trip every 15 minutes forever. A manual "sync now"
+    // deliberately does NOT check - it is a person asking, a revocation that was really a server
+    // restart should get the chance to heal, and finding out costs one authenticated request and
+    // zero login attempts.
     public class SyncOrchestrator
     {
         private readonly LocalDbService _db;
@@ -95,6 +102,33 @@ namespace WorkLedger_Client.Services
 
         // The cursor this device will pass as the next pull's `since`.
         public DateTime LastSyncedAt => _lastSyncedAt;
+
+        /// <summary>
+        /// The background tick's entry point. Plan 8 item 4d: no usable session, no requests.
+        /// </summary>
+        /// <remarks>
+        /// Separate from <see cref="RunSyncAsync"/> rather than a flag on it because the two
+        /// callers genuinely want different things. An unattended timer firing at a dead session
+        /// achieves nothing and, in the version of this design we did not build, would be the
+        /// thing that locks a sleeping user out of their own server. A person pressing "sync now"
+        /// has asked, and is owed the attempt.
+        /// <para>
+        /// Note this can only ever <i>reduce</i> what the client does. It is not where the lockout
+        /// guarantee comes from - that is Invariant L, inside the provider, which holds even if
+        /// this check were deleted.
+        /// </para>
+        /// </remarks>
+        public Task<SyncRunResult> RunTimerSyncAsync()
+        {
+            if (_provider is IAuthenticatingSyncProvider authenticating && !authenticating.Auth.CanSync)
+            {
+                Debug.WriteLine($"Skipping the scheduled sync: auth state is {authenticating.Auth.State}.");
+                return Task.FromResult(SyncRunResult.AuthenticationNeeded(
+                    "Sync is paused until you sign in again."));
+            }
+
+            return RunSyncAsync();
+        }
 
         // A sync run already in flight is never joined by a second one: the timer tick and a
         // manual "sync now" would otherwise interleave a push and a merge over the same queue
@@ -144,6 +178,11 @@ namespace WorkLedger_Client.Services
                     Ran = true,
                     Succeeded = pushFailure is null && pull.Succeeded,
                     ErrorMessage = pushFailure?.ErrorMessage ?? pull.ErrorMessage,
+                    // WL-134: either half discovering there is no session is enough. The push runs
+                    // first, so on a revoked token it is usually the one that finds out - but a
+                    // run with an empty queue pushes nothing, and then the pull is the only thing
+                    // that could have noticed.
+                    AuthenticationRequired = push.AuthenticationRequired || pull.AuthenticationRequired,
                     PushedCount = push.AcceptedSyncQueueIds.Count + push.RejectedSyncQueueIds.Count,
                     // Adopted push winners are remote changes this run merged too, so they count
                     // as received - otherwise a run that resolved a conflict reports nothing.
@@ -491,7 +530,7 @@ namespace WorkLedger_Client.Services
         {
             try
             {
-                await RunSyncAsync();
+                await RunTimerSyncAsync();
             }
             catch (Exception ex)
             {

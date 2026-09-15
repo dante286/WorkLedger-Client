@@ -1,4 +1,4 @@
-// Vendored verbatim from WorkLedger-API, src/WorkLedger.Contracts/Payloads/EntityPayloads.cs @ 2065662.
+// Vendored verbatim from WorkLedger-API, src/WorkLedger.Contracts/Payloads/EntityPayloads.cs @ 3d27c86.
 // The server is the source of truth for these shapes - see Sync/Contracts/README.md before editing.
 using System;
 
