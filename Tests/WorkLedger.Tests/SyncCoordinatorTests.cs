@@ -308,6 +308,171 @@ namespace WorkLedger.Tests
             Assert.NotNull(await _alpha.Db.GetDatabaseOwnerAsync());
         }
 
+        // ---------------------------------------------- WL-146: registration, claim, capabilities
+
+        [Fact]
+        public async Task RegisterAndSignInAsync_CreatesTheAccountThenSignsIn_WithoutRetypingAnything()
+        {
+            // /auth/register returns no token - creating an account is a user-level act with no
+            // device bound to it - so a registration that left the user signed out would be a form
+            // followed immediately by the same form. The coordinator follows through instead.
+            _alpha.Settings.SyncMode = SyncMode.Api;
+            _alpha.Settings.ApiEndpoint = ApiEndpoint;
+
+            var handler = new ApiSyncProviderTests.RecordingHandler()
+                .EnqueueJson(HttpStatusCode.Created, new
+                {
+                    Id = 42, Email = "new@example.com", DisplayName = "New Person", CreatedAtUtc = DateTime.UtcNow
+                })
+                .EnqueueJson(HttpStatusCode.OK, new
+                {
+                    Token = "issued-token",
+                    ExpiresAtUtc = DateTime.UtcNow.AddDays(365),
+                    User = new { Id = 42, Email = "new@example.com", DisplayName = "New Person", CreatedAtUtc = DateTime.UtcNow }
+                });
+
+            using var coordinator = new SyncCoordinator(
+                _alpha.Db, _alpha.SettingsService, _alpha.Settings, new HttpClient(handler));
+
+            var (success, message) = await coordinator.RegisterAndSignInAsync(
+                "new@example.com", "correct horse battery staple", "New Person", "signup-secret");
+
+            Assert.True(success);
+            Assert.Contains("Account created", message);
+
+            Assert.Equal("issued-token", _alpha.Settings.ApiToken);
+            Assert.Equal("new@example.com", _alpha.Settings.ApiEmail);
+
+            Assert.Equal(new[] { "/auth/register", "/auth/login" },
+                handler.Requests.ConvertAll(request => request.Uri.AbsolutePath).ToArray());
+
+            // And the sign-in adopted the database on the way through, so this install is now
+            // stamped for the account it just created.
+            var owner = await _alpha.Db.GetDatabaseOwnerAsync();
+            Assert.Equal(42, owner!.UserId);
+        }
+
+        [Fact]
+        public async Task RegisterAndSignInAsync_OnADuplicateEmail_LeavesNothingSignedIn()
+        {
+            _alpha.Settings.SyncMode = SyncMode.Api;
+            _alpha.Settings.ApiEndpoint = ApiEndpoint;
+
+            var handler = new ApiSyncProviderTests.RecordingHandler()
+                .EnqueueRaw(HttpStatusCode.Conflict, "{}")
+                // The re-probe the stale capabilities trigger.
+                .EnqueueJson(HttpStatusCode.OK, new
+                {
+                    RegistrationEnabled = true, RegistrationRequiresSecret = true, MinPasswordLength = 12,
+                    HasUnclaimedAccount = false, MaxFailedLogins = 5, LockoutMinutes = 15
+                });
+
+            using var coordinator = new SyncCoordinator(
+                _alpha.Db, _alpha.SettingsService, _alpha.Settings, new HttpClient(handler));
+
+            var (success, message) = await coordinator.RegisterAndSignInAsync(
+                "taken@example.com", "correct horse battery staple", null, "signup-secret");
+
+            Assert.False(success);
+            Assert.Contains("already exists", message);
+
+            Assert.Equal(string.Empty, _alpha.Settings.ApiToken);
+            Assert.Null(await _alpha.Db.GetDatabaseOwnerAsync());
+
+            // No login was attempted - there is no account to log into - and the capabilities were
+            // re-asked so the panel stops offering what just proved impossible.
+            Assert.DoesNotContain(handler.Requests, request => request.Uri.AbsolutePath == "/auth/login");
+            Assert.Contains(handler.Requests, request => request.Uri.AbsolutePath == "/auth/capabilities");
+        }
+
+        [Fact]
+        public async Task ClaimAndSignInAsync_TakesOwnershipThenSignsIn()
+        {
+            _alpha.Settings.SyncMode = SyncMode.Api;
+            _alpha.Settings.ApiEndpoint = ApiEndpoint;
+
+            var handler = new ApiSyncProviderTests.RecordingHandler()
+                .EnqueueJson(HttpStatusCode.OK, new
+                {
+                    Id = 1, Email = "owner@example.com", DisplayName = (string?)null, CreatedAtUtc = DateTime.UtcNow
+                })
+                .EnqueueJson(HttpStatusCode.OK, new
+                {
+                    Token = "issued-token",
+                    ExpiresAtUtc = DateTime.UtcNow.AddDays(365),
+                    User = new { Id = 1, Email = "owner@example.com", DisplayName = (string?)null, CreatedAtUtc = DateTime.UtcNow }
+                });
+
+            using var coordinator = new SyncCoordinator(
+                _alpha.Db, _alpha.SettingsService, _alpha.Settings, new HttpClient(handler));
+
+            var (success, message) = await coordinator.ClaimAndSignInAsync(
+                "owner@example.com", "correct horse battery staple", null, "signup-secret");
+
+            Assert.True(success);
+            Assert.Contains("Claimed this server", message);
+            Assert.Equal("/auth/claim", handler.Requests[0].Uri.AbsolutePath);
+            Assert.Equal("issued-token", _alpha.Settings.ApiToken);
+        }
+
+        // The server answers unknown email, wrong password and a credential-less legacy account with
+        // an identical 401, on purpose, so an anonymous caller cannot enumerate accounts. Asserted
+        // here so nobody later "helpfully" derives three messages from one status code.
+        [Theory]
+        [InlineData("no-such-account@example.com")]
+        [InlineData("wrong-password@example.com")]
+        [InlineData("never-claimed@example.com")]
+        public async Task SignInAsync_GivesOneMessageForEveryKindOfRejectedCredential(string email)
+        {
+            _alpha.Settings.SyncMode = SyncMode.Api;
+            _alpha.Settings.ApiEndpoint = ApiEndpoint;
+
+            var handler = new ApiSyncProviderTests.RecordingHandler()
+                .EnqueueRaw(HttpStatusCode.Unauthorized, "{\"error\":\"Invalid email or password.\"}");
+
+            using var coordinator = new SyncCoordinator(
+                _alpha.Db, _alpha.SettingsService, _alpha.Settings, new HttpClient(handler));
+
+            var (success, message) = await coordinator.SignInAsync(email, "whatever");
+
+            Assert.False(success);
+            Assert.Equal("Those sign-in details weren't accepted.", message);
+        }
+
+        [Fact]
+        public async Task ConsecutiveFailedSignIns_CountUp_AndResetOnSuccess()
+        {
+            // WL-146 item 2a. The count drives the pre-send warning, and it must reset on a success
+            // or the warning would haunt an account that is working perfectly well.
+            _alpha.Settings.SyncMode = SyncMode.Api;
+            _alpha.Settings.ApiEndpoint = ApiEndpoint;
+
+            var handler = new ApiSyncProviderTests.RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.Unauthorized)
+            {
+                Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json")
+            });
+
+            using var coordinator = new SyncCoordinator(
+                _alpha.Db, _alpha.SettingsService, _alpha.Settings, new HttpClient(handler));
+
+            // Each attempt is a different password, so Invariant L's per-credential discard does not
+            // suppress them - this is a user typing, which is the only path that can reach a lockout.
+            await coordinator.SignInAsync("owner@example.com", "first guess");
+            await coordinator.SignInAsync("owner@example.com", "second guess");
+            await coordinator.SignInAsync("owner@example.com", "third guess");
+
+            Assert.Equal(3, coordinator.ConsecutiveFailedSignIns);
+        }
+
+        [Fact]
+        public async Task GetCapabilitiesAsync_WithoutAnEndpoint_AnswersNullRatherThanFailing()
+        {
+            _alpha.Settings.SyncMode = SyncMode.Api;
+            _alpha.Settings.ApiEndpoint = string.Empty;
+
+            Assert.Null(await _alpha.Coordinator.GetCapabilitiesAsync());
+        }
+
         private const string ApiEndpoint = "https://workledger.example.com";
 
         // One scripted /auth/login response and nothing else - these tests are about what happens

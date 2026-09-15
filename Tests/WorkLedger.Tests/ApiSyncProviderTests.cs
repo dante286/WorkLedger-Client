@@ -714,6 +714,181 @@ namespace WorkLedger.Tests
             Assert.NotNull(provider.Auth.RetryAfterUtc);
         }
 
+        // ------------------------------------------------- WL-146: capabilities, register, claim
+
+        private static object CapabilitiesBody(
+            bool registrationEnabled = true, bool requiresSecret = true, int minPasswordLength = 12,
+            bool hasUnclaimed = false, int maxFailedLogins = 5, int lockoutMinutes = 15)
+            => new
+            {
+                RegistrationEnabled = registrationEnabled,
+                RegistrationRequiresSecret = requiresSecret,
+                MinPasswordLength = minPasswordLength,
+                HasUnclaimedAccount = hasUnclaimed,
+                MaxFailedLogins = maxFailedLogins,
+                LockoutMinutes = lockoutMinutes
+            };
+
+        [Fact]
+        public async Task Capabilities_AreParsedIncludingTheLockoutPolicy()
+        {
+            var handler = new RecordingHandler().EnqueueJson(HttpStatusCode.OK, CapabilitiesBody(hasUnclaimed: true));
+            var provider = CreateProvider(handler, new FakeTokenStore());
+
+            var capabilities = await provider.TryGetCapabilitiesAsync();
+
+            Assert.NotNull(capabilities);
+            Assert.True(capabilities!.RegistrationEnabled);
+            Assert.True(capabilities.HasUnclaimedAccount);
+            Assert.Equal(12, capabilities.MinPasswordLength);
+            Assert.Equal(5, capabilities.MaxFailedLogins);
+            Assert.Equal(15, capabilities.LockoutMinutes);
+
+            Assert.Equal("/auth/capabilities", Assert.Single(handler.Requests).Uri.AbsolutePath);
+        }
+
+        // Anonymous endpoint. A stale token must not be able to turn feature discovery into a 401 -
+        // being signed out is exactly when a client most needs to know what the server offers.
+        [Fact]
+        public async Task Capabilities_AreProbedAnonymously_EvenWhenATokenIsStored()
+        {
+            var handler = new RecordingHandler().EnqueueJson(HttpStatusCode.OK, CapabilitiesBody());
+            var provider = CreateProvider(handler, new FakeTokenStore("a-perfectly-good-token", DateTime.UtcNow.AddDays(30)));
+
+            await provider.TryGetCapabilitiesAsync();
+
+            Assert.Null(Assert.Single(handler.Requests).BearerToken);
+        }
+
+        // A server predating the user-accounts work is a supported thing to point at, not an error.
+        [Fact]
+        public async Task Capabilities_OnA404_DegradeToSignInOnly_AndAreNotAskedAgain()
+        {
+            var handler = new RecordingHandler().EnqueueRaw(HttpStatusCode.NotFound, "{}");
+            var provider = CreateProvider(handler, new FakeTokenStore());
+
+            Assert.Null(await provider.TryGetCapabilitiesAsync());
+
+            // A definitive answer, so it is cached: re-asking every time the panel opens would be a
+            // request per glance at a server that will keep saying the same thing.
+            Assert.Null(await provider.TryGetCapabilitiesAsync());
+            Assert.Single(handler.Requests);
+        }
+
+        [Fact]
+        public async Task Capabilities_OnAnUnreachableServer_AreRetriedRatherThanCached()
+        {
+            // A transport failure is not an answer about the server's features. Caching it would
+            // hide the registration UI until restart over what may have been a brief outage.
+            var handler = new RecordingHandler()
+                .EnqueueThrow(new HttpRequestException("no route to host"))
+                .EnqueueJson(HttpStatusCode.OK, CapabilitiesBody());
+            var provider = CreateProvider(handler, new FakeTokenStore());
+
+            Assert.Null(await provider.TryGetCapabilitiesAsync());
+            Assert.NotNull(await provider.TryGetCapabilitiesAsync());
+            Assert.Equal(2, handler.Requests.Count);
+        }
+
+        [Fact]
+        public async Task Capabilities_AreCachedUntilAskedToRefresh()
+        {
+            var handler = new RecordingHandler()
+                .EnqueueJson(HttpStatusCode.OK, CapabilitiesBody(registrationEnabled: true))
+                .EnqueueJson(HttpStatusCode.OK, CapabilitiesBody(registrationEnabled: false));
+            var provider = CreateProvider(handler, new FakeTokenStore());
+
+            Assert.True((await provider.TryGetCapabilitiesAsync())!.RegistrationEnabled);
+            Assert.True((await provider.TryGetCapabilitiesAsync())!.RegistrationEnabled);
+            Assert.Single(handler.Requests);
+
+            Assert.False((await provider.TryGetCapabilitiesAsync(refresh: true))!.RegistrationEnabled);
+            Assert.Equal(2, handler.Requests.Count);
+        }
+
+        [Fact]
+        public async Task Register_SendsTheSignupSecret_AndReturnsTheCreatedUserWithoutAToken()
+        {
+            var tokens = new FakeTokenStore();
+            var handler = new RecordingHandler().EnqueueJson(HttpStatusCode.Created, new
+            {
+                Id = 4, Email, DisplayName = "A Person", CreatedAtUtc = DateTime.UtcNow
+            });
+            var provider = CreateProvider(handler, tokens);
+
+            var outcome = await provider.TryRegisterAsync(Email, Password, "A Person", "signup-secret");
+
+            Assert.True(outcome.Success);
+            Assert.Equal(4, outcome.User!.Id);
+
+            var request = Assert.Single(handler.Requests);
+            Assert.Equal("/auth/register", request.Uri.AbsolutePath);
+            Assert.Null(request.BearerToken);
+            Assert.Contains(Email, request.Body);
+
+            // Registration mints NO token - it is a user-level act with no device bound to it - so
+            // nothing was stored and the caller has to follow with a login.
+            Assert.Null(tokens.Token);
+        }
+
+        [Theory]
+        [InlineData(HttpStatusCode.Forbidden, "registration turned off")]
+        [InlineData(HttpStatusCode.Unauthorized, "signup secret")]
+        [InlineData(HttpStatusCode.Conflict, "already exists")]
+        [InlineData(HttpStatusCode.TooManyRequests, "address")]
+        public async Task Register_MapsEachFailureToItsOwnMessage(HttpStatusCode status, string expected)
+        {
+            var handler = new RecordingHandler().EnqueueRaw(status, "{}");
+            var provider = CreateProvider(handler, new FakeTokenStore());
+
+            var outcome = await provider.TryRegisterAsync(Email, Password, null, "secret");
+
+            Assert.False(outcome.Success);
+            Assert.Contains(expected, outcome.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Theory]
+        [InlineData(HttpStatusCode.Forbidden)]
+        [InlineData(HttpStatusCode.Conflict)]
+        public async Task Register_FlagsTheCachedCapabilitiesAsStale_WhenTheServerHasMovedOn(HttpStatusCode status)
+        {
+            var handler = new RecordingHandler().EnqueueRaw(status, "{}");
+            var provider = CreateProvider(handler, new FakeTokenStore());
+
+            Assert.True((await provider.TryRegisterAsync(Email, Password, null, "secret")).CapabilitiesStale);
+        }
+
+        [Fact]
+        public async Task Register_OnAValidationFailure_ShowsTheServersOwnReason()
+        {
+            // The one case where the server's words beat ours: it knows the rule, and this client
+            // deliberately does not duplicate it.
+            var handler = new RecordingHandler().EnqueueRaw(
+                HttpStatusCode.BadRequest, "{\"error\":\"Password must be at least 12 characters.\"}");
+            var provider = CreateProvider(handler, new FakeTokenStore());
+
+            var outcome = await provider.TryRegisterAsync(Email, "short", null, "secret");
+
+            Assert.Equal("Password must be at least 12 characters.", outcome.ErrorMessage);
+        }
+
+        [Fact]
+        public async Task Claim_PostsToClaim_AndSaysSomethingDifferentFromRegisterOnA409()
+        {
+            var handler = new RecordingHandler().EnqueueRaw(HttpStatusCode.Conflict, "{}");
+            var provider = CreateProvider(handler, new FakeTokenStore());
+
+            var outcome = await provider.TryClaimAsync(Email, Password, null, "secret");
+
+            Assert.Equal("/auth/claim", Assert.Single(handler.Requests).Uri.AbsolutePath);
+            Assert.False(outcome.Success);
+
+            // "Nothing left to claim" and "that email is taken" are different facts about the
+            // server, and the user's next move differs accordingly.
+            Assert.Contains("nothing left to claim", outcome.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+            Assert.True(outcome.CapabilitiesStale);
+        }
+
         // ---------------------------------------------------------- WL-134 item 4a, free states
 
         // Reached with NO request at all. A year-idle install should prompt for a sign-in, not

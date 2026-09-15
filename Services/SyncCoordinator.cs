@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
+using WorkLedger.Contracts.Auth;
 using WorkLedger_Client.Models;
 using WorkLedger_Client.Sync;
 
@@ -62,9 +63,27 @@ namespace WorkLedger_Client.Services
         // all but a second or two of its life - something the type system can express.
         private ApiCredentials? _credential;
 
-        // The Api-mode provider currently in use, kept so the auth state has somewhere to be read
-        // from. Null in File and Off modes, which have no session to lose.
+        // THE Api provider - one instance, shared by the orchestrator's sync calls and by
+        // everything the auth panel does. Deliberately not two.
+        //
+        // Two would let the timer discover a revocation that the UI never hears about, because the
+        // 401 verdict lives on the instance that saw it. It would also probe /auth/capabilities
+        // twice. Keyed by endpoint, so pointing at a different server gets a genuinely fresh
+        // session and capability cache; not cleared when the mode changes, since the token in
+        // settings is the same either way and the capability cache is worth keeping across a toggle.
         private ApiSyncProvider? _apiProvider;
+        private string _apiProviderEndpoint = string.Empty;
+
+        // WL-146, plan 9 item 2a. Consecutive failed INTERACTIVE sign-ins for the current email,
+        // held in memory only.
+        //
+        // The number is deliberately a lower bound rather than the truth: the server's
+        // FailedLoginCount lives on the USER row, so attempts from a phone or another laptop spend
+        // the same budget and this install cannot see them. That is why the warning fires at three
+        // rather than at the threshold - being conservative is the only honest option when the
+        // count you hold is not the count that matters.
+        private int _consecutiveFailedSignIns;
+        private string _failureCountEmail = string.Empty;
 
         private bool _preMergeBackupTakenThisSession;
 
@@ -146,6 +165,104 @@ namespace WorkLedger_Client.Services
 
             var minutes = Math.Max(1, (int)Math.Ceiling((instant - DateTime.UtcNow).TotalMinutes));
             return $"{what}. Try again in about {minutes} minute{(minutes == 1 ? string.Empty : "s")}.";
+        }
+
+        /// <summary>
+        /// Consecutive failed interactive sign-ins seen by this install for the current email.
+        /// WL-146 item 2a. A lower bound on the server's count, never the truth - see the field.
+        /// </summary>
+        public int ConsecutiveFailedSignIns => _consecutiveFailedSignIns;
+
+        /// <summary>
+        /// What the configured server allows, or null when it cannot say. WL-146 item 1.
+        /// </summary>
+        /// <remarks>
+        /// Null is a normal answer, not an error: an endpoint that isn't set yet, a server predating
+        /// the capabilities endpoint, or one that is simply unreachable right now. Every caller
+        /// treats null as "sign-in only", which keeps a pre-user-accounts server usable.
+        /// </remarks>
+        public Task<AuthCapabilitiesResponse?> GetCapabilitiesAsync(bool refresh = false)
+        {
+            var provider = EnsureApiProvider();
+            return provider is null
+                ? Task.FromResult<AuthCapabilitiesResponse?>(null)
+                : provider.TryGetCapabilitiesAsync(refresh);
+        }
+
+        /// <summary>
+        /// Who this token belongs to, straight from the server. WL-146 item 5.
+        /// </summary>
+        /// <remarks>
+        /// Doubles as a liveness check: it is the cheapest authenticated request there is, so asking
+        /// it when the panel opens confirms the session is still real without costing a login
+        /// attempt. Null when there is no session or the server cannot be reached.
+        /// </remarks>
+        public Task<WhoAmIResponse?> WhoAmIAsync()
+        {
+            var provider = EnsureApiProvider();
+            return provider is null ? Task.FromResult<WhoAmIResponse?>(null) : provider.TryWhoAmIAsync();
+        }
+
+        /// <summary>
+        /// Creates an account and signs in with it. WL-146 item 3.
+        /// </summary>
+        public Task<(bool Success, string Message)> RegisterAndSignInAsync(
+            string email, string password, string? displayName, string? bootstrapSecret)
+            => CreateAccountAndSignInAsync(email, password, displayName, bootstrapSecret, claiming: false);
+
+        /// <summary>
+        /// Takes ownership of this server's pre-existing unclaimed data, then signs in. WL-146 item 4.
+        /// </summary>
+        public Task<(bool Success, string Message)> ClaimAndSignInAsync(
+            string email, string password, string? displayName, string? bootstrapSecret)
+            => CreateAccountAndSignInAsync(email, password, displayName, bootstrapSecret, claiming: true);
+
+        private async Task<(bool Success, string Message)> CreateAccountAndSignInAsync(
+            string email, string password, string? displayName, string? bootstrapSecret, bool claiming)
+        {
+            if (string.IsNullOrWhiteSpace(_settings.ApiEndpoint))
+                return (false, "Enter an API endpoint first.");
+
+            var provider = EnsureApiProvider();
+            if (provider is null)
+                return (false, "Enter an API endpoint first.");
+
+            try
+            {
+                var outcome = claiming
+                    ? await provider.TryClaimAsync(email.Trim(), password, displayName, bootstrapSecret)
+                    : await provider.TryRegisterAsync(email.Trim(), password, displayName, bootstrapSecret);
+
+                if (!outcome.Success)
+                {
+                    // Re-probe before answering, so the panel the user is looking at stops offering
+                    // whatever just turned out to be impossible.
+                    if (outcome.CapabilitiesStale)
+                        await provider.TryGetCapabilitiesAsync(refresh: true);
+
+                    return (false, outcome.ErrorMessage ?? (claiming ? "Claim failed." : "Registration failed."));
+                }
+
+                // The account exists but nothing is signed in: registration mints no token. Follow
+                // straight through with the credentials already in hand rather than asking the user
+                // to retype what they just chose.
+                //
+                // Note this is also where WL-138's ownership guard runs, and it can legitimately
+                // refuse: a brand new account signing in against a database that already belongs to
+                // someone else is exactly the case the guard exists for. The account is still
+                // created - that happened server-side - so the message has to be about the sign-in.
+                var (signedIn, message) = await SignInAsync(email, password);
+                var created = claiming ? "Claimed this server" : "Account created";
+
+                return signedIn
+                    ? (true, $"{created}. {message}")
+                    : (false, $"{created}, but signing in failed. {message}");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Account creation failed: {ex.Message}");
+                return (false, $"{(claiming ? "Claim" : "Registration")} failed: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -239,21 +356,34 @@ namespace WorkLedger_Client.Services
                 // cutover. Idempotent and a no-op for everyone else, so it costs one read.
                 await _db.BackfillDatabaseOwnerAsync(_settings.LastSyncedAtUtc.HasValue);
 
-                // Built here rather than reused from the orchestrator so a user can sign in while
-                // the mode is still being set up - signing in is what makes Api mode usable, so
-                // requiring it to already be selected and valid would be the wrong way round.
-                var provider = new ApiSyncProvider(
-                    _http, _settings.ApiEndpoint, _settings.DeviceId, _syncStore, () => _credential, DeviceLabel());
+                // The shared instance, not a throwaway - so a rejection recorded here is the same
+                // verdict the sync path and the UI read afterwards. It exists whether or not the
+                // mode is Api yet: signing in is what makes Api mode usable, so requiring the mode
+                // to be selected and valid first would be the wrong way round.
+                var provider = EnsureApiProvider();
+                if (provider is null)
+                    return (false, "Enter an API endpoint first.");
 
                 var outcome = await provider.TryLoginAsync();
                 if (!outcome.Success || outcome.User is not { } user)
                 {
+                    RecordSignInFailure(email);
+
                     // Surface the provider's own sentence: it is the only thing that knows whether
                     // this was a wrong password, a lockout, a rate limit or an unreachable server,
                     // and those want to be said differently.
-                    _apiProvider = provider;
+                    //
+                    // What it will NOT say is which of unknown-email, wrong-password and
+                    // unclaimed-account this was. The server answers all three with an identical
+                    // 401 to stop anonymous account enumeration, and the client is the last place
+                    // that distinction could leak. Note registration deliberately does the opposite
+                    // and 409s a duplicate email - that asymmetry is intentional, because getting
+                    // that far required the signup secret. Do not "fix" either half to match the
+                    // other.
                     return (false, outcome.ErrorMessage ?? "Sign-in failed.");
                 }
+
+                ResetSignInFailures();
 
                 // Read before writing: the claim below overwrites the stamp, and the previous
                 // endpoint is the thing an EndpointChanged message has to name.
@@ -327,6 +457,27 @@ namespace WorkLedger_Client.Services
             // still holding the state of the session that just ended.
             _builtForConfiguration = string.Empty;
             ApplyConfiguration();
+        }
+
+        // WL-146 item 2a. Counted per email, so switching accounts starts a fresh count - the
+        // server's budget is per user too, and carrying one email's failures onto another would
+        // warn about a threshold that address is nowhere near.
+        private void RecordSignInFailure(string email)
+        {
+            var normalized = DatabaseOwner.NormalizeEmail(email);
+            if (!string.Equals(_failureCountEmail, normalized, StringComparison.Ordinal))
+            {
+                _failureCountEmail = normalized;
+                _consecutiveFailedSignIns = 0;
+            }
+
+            _consecutiveFailedSignIns++;
+        }
+
+        private void ResetSignInFailures()
+        {
+            _consecutiveFailedSignIns = 0;
+            _failureCountEmail = string.Empty;
         }
 
         // Drops the session and only the session. Shared by SignOut and by the ownership refusal,
@@ -407,25 +558,34 @@ namespace WorkLedger_Client.Services
             _builtForConfiguration = configuration;
         }
 
-        private ISyncProvider BuildProvider()
+        // The single Api provider, built on demand and rebuilt only when the endpoint changes.
+        // Null when there is no endpoint to talk to, which is a configuration state rather than a
+        // failure - every caller reads null as "nothing to ask yet".
+        private ApiSyncProvider? EnsureApiProvider()
         {
-            // Dropped whenever the mode is not Api, so ApiAuth can never report the state of a
-            // session belonging to a configuration that is no longer in use.
-            if (_settings.SyncMode != SyncMode.Api)
-                _apiProvider = null;
+            if (string.IsNullOrWhiteSpace(_settings.ApiEndpoint))
+                return null;
 
-            return BuildProviderCore();
+            if (_apiProvider is not null
+                && string.Equals(_apiProviderEndpoint, _settings.ApiEndpoint, StringComparison.OrdinalIgnoreCase))
+                return _apiProvider;
+
+            _apiProviderEndpoint = _settings.ApiEndpoint;
+            _apiProvider = new ApiSyncProvider(
+                _http, _settings.ApiEndpoint, _settings.DeviceId, _syncStore, () => _credential, DeviceLabel());
+
+            return _apiProvider;
         }
 
-        private ISyncProvider BuildProviderCore() => _settings.SyncMode switch
+        private ISyncProvider BuildProvider() => _settings.SyncMode switch
         {
             SyncMode.File => new FileSyncProvider(
                 _settings.SyncFolderPath,
                 _settings.DeviceId,
                 TimeSpan.FromDays(Math.Max(1, _settings.SyncRetentionDays))),
 
-            SyncMode.Api => _apiProvider = new ApiSyncProvider(
-                _http, _settings.ApiEndpoint, _settings.DeviceId, _syncStore, () => _credential, DeviceLabel()),
+            // The same instance the auth panel uses, so one 401 is one verdict everywhere.
+            SyncMode.Api => EnsureApiProvider() ?? (ISyncProvider)new NullSyncProvider(),
 
             _ => new NullSyncProvider()
         };

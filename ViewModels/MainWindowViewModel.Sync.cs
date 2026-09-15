@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using WorkLedger.Contracts.Auth;
 using WorkLedger_Client.Services;
 
 namespace WorkLedger_Client.ViewModels
@@ -69,6 +70,53 @@ namespace WorkLedger_Client.ViewModels
         [ObservableProperty]
         private string _apiTokenStatus = "Not signed in";
 
+        // WL-146. The account-creation half of the panel, all of it driven by what the server said
+        // it allows rather than by what this client can imagine offering.
+        [ObservableProperty]
+        private bool _canCreateAccount;
+
+        [ObservableProperty]
+        private bool _canClaimServer;
+
+        [ObservableProperty]
+        private bool _requiresSignupSecret;
+
+        [ObservableProperty]
+        private bool _isCreateAccountOpen;
+
+        [ObservableProperty]
+        private string _newAccountEmail = string.Empty;
+
+        [ObservableProperty]
+        private string _newAccountPassword = string.Empty;
+
+        [ObservableProperty]
+        private string _newAccountConfirmPassword = string.Empty;
+
+        [ObservableProperty]
+        private string _newAccountDisplayName = string.Empty;
+
+        // The only place the bootstrap secret survives plan 8, and only while a registration form
+        // is open. Never persisted - no autosave hook, and no AppSettings field to write it to.
+        [ObservableProperty]
+        private string _signupSecret = string.Empty;
+
+        // WL-146 item 2a. Sits in the panel after the second failure, so it is already on screen
+        // before the third attempt is sent - which is what "warn before sending" has to mean for a
+        // button the user presses whenever they like.
+        [ObservableProperty]
+        private string _signInWarning = string.Empty;
+
+        // Plan 9 item 2: while this is true the Sign in command refuses to run. The server rejects
+        // even the correct password during a lockout, so an attempt could only burn the per-IP
+        // limit shared with every other device on this network.
+        [ObservableProperty]
+        [NotifyCanExecuteChangedFor(nameof(SignInCommand))]
+        private bool _isLockedOut;
+
+        [ObservableProperty]
+        private string _lockoutCountdown = string.Empty;
+
         // WL-134 item 4e: the signed-out condition is persistent UI state, not an event. A skipped
         // run every 15 minutes is 96 a day, and toasting each one is 96 toasts - a correct design
         // that users would switch off. The toast fires only on the TRANSITION into it, tracked by
@@ -82,6 +130,20 @@ namespace WorkLedger_Client.ViewModels
         // The previous value of IsSignedOutOfApi, so a toast can fire on the edge rather than the
         // level. Deliberately plain fields: they are not bound to anything and should not be.
         private bool _lastAuthenticationRequired;
+
+        // What the server last said it allows. Null until probed, and null is a legitimate settled
+        // answer too - a server predating /auth/capabilities, or one that is unreachable.
+        private AuthCapabilitiesResponse? _capabilities;
+
+        // Ticks only while locked out, to run the countdown down and re-enable Sign in at the
+        // instant the server would start accepting attempts again.
+        private DispatcherTimer? _lockoutTimer;
+
+        private DateTime? _lockedUntilUtc;
+
+        // From GET /auth/whoami, so the panel can say "Signed in as A Person (a@example.com)". Not
+        // persisted: it is cosmetic, and the email in settings is the identity that matters.
+        private string? _signedInDisplayName;
 
         // Launching into a signed-out state is not a transition into one. Without this, an install
         // configured for Api sync greets the user with a toast on every start, which is the
@@ -116,11 +178,11 @@ namespace WorkLedger_Client.ViewModels
                 }
                 else if (result.AuthenticationRequired)
                 {
-                    // Already carries the coordinator's specific wording - signed out, expired,
-                    // revoked, locked out or rate-limited - so it is shown as-is rather than
-                    // wrapped in "Sync failed", which is the framing that sends people looking for
-                    // a network problem they don't have.
-                    _toastService?.ShowToast(result.ErrorMessage ?? "Sign in to sync.", 4000);
+                    // Plan 9 item 6. Not "Sync failed: 401" - a message whose only available
+                    // response is to press Sync now again. The panel above now holds the
+                    // explanation and the sign-in form with the email prefilled; this is the nudge
+                    // towards it.
+                    _toastService?.ShowToast(result.ErrorMessage ?? "Sign in to sync.", 4500);
                 }
                 else if (!result.Succeeded)
                 {
@@ -143,7 +205,7 @@ namespace WorkLedger_Client.ViewModels
             }
         }
 
-        [RelayCommand]
+        [RelayCommand(CanExecute = nameof(CanAttemptSignIn))]
         private async Task SignInAsync()
         {
             // The endpoint and email the user just typed are what they expect to sign in with.
@@ -162,21 +224,104 @@ namespace WorkLedger_Client.ViewModels
                 // The coordinator normalizes and persists the address the server actually
                 // recognized, which may differ in case from what was typed.
                 ApiEmail = _settings.ApiEmail;
+                IsCreateAccountOpen = false;
             }
 
-            RefreshSyncStatus();
+            await RefreshAuthPanelAsync();
             _toastService?.ShowToast(message, success ? 3000 : 5000);
         }
 
+        // Plan 9 item 2. Not a style choice: an attempt made during a lockout is refused by the
+        // server whatever the password is, and spends the per-IP budget shared with every other
+        // device behind this address.
+        private bool CanAttemptSignIn() => !IsLockedOut;
+
         [RelayCommand]
-        private void SignOut()
+        private void ToggleCreateAccount()
         {
-            // WL-138 item 6h: an auth event, never a data event. The database, the pending queue,
-            // the cursor and the ownership stamp all survive - the app has to stay fully usable
-            // with no server, so signing out is not a request to stop working.
+            IsCreateAccountOpen = !IsCreateAccountOpen;
+            if (!IsCreateAccountOpen)
+                ClearNewAccountForm();
+        }
+
+        [RelayCommand]
+        private Task CreateAccountAsync() => SubmitNewAccountAsync(claiming: false);
+
+        [RelayCommand]
+        private Task ClaimServerAsync() => SubmitNewAccountAsync(claiming: true);
+
+        // Registration and claim differ by one endpoint and by the wording around them; everything
+        // else - validation, the automatic follow-on sign-in, clearing the form - is identical, so
+        // they share this.
+        private async Task SubmitNewAccountAsync(bool claiming)
+        {
+            PersistSettings();
+
+            // Length only, and only against what this server reported. No composition rules of our
+            // own: the server deliberately has none, and inventing one here would refuse passwords
+            // it would have accepted.
+            var invalid = AuthPanelState.ValidateNewPassword(
+                NewAccountPassword, NewAccountConfirmPassword, _capabilities?.MinPasswordLength ?? 0);
+
+            if (invalid != null)
+            {
+                _toastService?.ShowToast(invalid, 4000);
+                return;
+            }
+
+            var email = NewAccountEmail;
+            var password = NewAccountPassword;
+            var displayName = string.IsNullOrWhiteSpace(NewAccountDisplayName) ? null : NewAccountDisplayName.Trim();
+            var secret = string.IsNullOrWhiteSpace(SignupSecret) ? null : SignupSecret;
+
+            // Out of the bound fields before the await, for the same reason the sign-in password is.
+            NewAccountPassword = string.Empty;
+            NewAccountConfirmPassword = string.Empty;
+            SignupSecret = string.Empty;
+
+            var (success, message) = claiming
+                ? await _syncCoordinator.ClaimAndSignInAsync(email, password, displayName, secret)
+                : await _syncCoordinator.RegisterAndSignInAsync(email, password, displayName, secret);
+
+            if (success)
+            {
+                // The coordinator already signed in with these credentials, so there is nothing
+                // left for this form to do.
+                ApiEmail = _settings.ApiEmail;
+                IsCreateAccountOpen = false;
+                ClearNewAccountForm();
+            }
+
+            // Re-probe either way: a failure may have been the operator changing the server's mind
+            // since we last asked, and a success has just consumed the only claimable account.
+            await RefreshAuthPanelAsync(refreshCapabilities: true);
+            _toastService?.ShowToast(message, success ? 3500 : 5000);
+        }
+
+        private void ClearNewAccountForm()
+        {
+            NewAccountPassword = string.Empty;
+            NewAccountConfirmPassword = string.Empty;
+            SignupSecret = string.Empty;
+        }
+
+        [RelayCommand]
+        private Task RefreshCapabilitiesAsync() => RefreshAuthPanelAsync(refreshCapabilities: true);
+
+        [RelayCommand]
+        private async Task SignOutAsync()
+        {
+            // WL-138 item 6h / plan 9 item 7: an auth event, never a data event - and the message
+            // says so, because "sign out" reads like "disconnect and forget" while this app's local
+            // database is the user's actual work. It is also honest about what it does NOT do: the
+            // token stops being used here but is not revoked server-side. That is logout-all, and
+            // it is plan 10.
             _syncCoordinator.SignOut();
-            RefreshSyncStatus();
-            _toastService?.ShowToast("Signed out. Your work stays on this device.", 3000);
+            await RefreshAuthPanelAsync();
+
+            _toastService?.ShowToast(
+                "Signed out on this device. Your projects, tasks and entries stay here, and the "
+                + "server hasn't been told to revoke the session.", 4500);
         }
 
         // Re-reads the display-only sync state out of the live AppSettings. Cheap enough to
@@ -187,31 +332,105 @@ namespace WorkLedger_Client.ViewModels
                 ? lastSynced.ToLocalTime().ToString("g")
                 : "Never";
 
-            var auth = _syncCoordinator.ApiAuth;
-            IsSignedOutOfApi = !auth.CanSync;
+            ApplyAuthPanelState(AuthPanelState.From(
+                _syncCoordinator.ApiAuth,
+                _capabilities,
+                _settings.ApiEmail,
+                _signedInDisplayName,
+                _settings.ApiTokenExpiresAtUtc));
+        }
 
-            ApiTokenStatus = auth.CanSync
-                ? DescribeSignedIn()
-                : _syncCoordinator.DescribeAuthState();
+        /// <summary>
+        /// WL-146. Re-probes what the server allows, refreshes who is signed in, and re-renders the
+        /// panel. Call when the Sync settings come into view and after anything that could have
+        /// changed the session.
+        /// </summary>
+        private async Task RefreshAuthPanelAsync(bool refreshCapabilities = false)
+        {
+            if (_settings.SyncMode == SyncMode.Api)
+            {
+                // Anonymous, so it works precisely when it is most needed - while signed out.
+                _capabilities = await _syncCoordinator.GetCapabilitiesAsync(refreshCapabilities);
 
-            // WL-134 item 4e: fire on the edge, not the level.
+                // Cheap, authenticated, and it doubles as a liveness check: if the session has been
+                // revoked elsewhere this is what finds out, at the cost of zero login attempts.
+                if (_syncCoordinator.ApiAuth.CanSync)
+                {
+                    var whoami = await _syncCoordinator.WhoAmIAsync();
+                    _signedInDisplayName = whoami?.DisplayName;
+                }
+                else
+                {
+                    _signedInDisplayName = null;
+                }
+            }
+
+            RefreshSyncStatus();
+        }
+
+        private void ApplyAuthPanelState(AuthPanelState panel)
+        {
+            IsSignedOutOfApi = !panel.IsSignedIn;
+            ApiTokenStatus = panel.StatusMessage;
+            CanCreateAccount = panel.ShowCreateAccount;
+            CanClaimServer = panel.ShowClaimServer;
+            RequiresSignupSecret = panel.ShowSignupSecret;
+
+            SignInWarning = AuthPanelState.DescribeRepeatedFailureWarning(
+                _syncCoordinator.ConsecutiveFailedSignIns, _capabilities);
+
+            ApplyLockout(panel);
+
+            // Plan 9 item 6: a revoked session belongs in the sign-in form with the email already
+            // filled in, not behind a toast the user can only answer by pressing Sync now again.
+            if (!panel.IsSignedIn && string.IsNullOrWhiteSpace(ApiEmail))
+                ApiEmail = _settings.ApiEmail;
+
+            // WL-134 item 4e: fire on the edge, not the level. A 15-minute tick that toasted every
+            // time would be ~96 notifications a day; the state itself lives in the panel above.
             if (_authStateObserved && IsSignedOutOfApi && !_lastAuthenticationRequired && _settings.SyncMode == SyncMode.Api)
-                _toastService?.ShowToast(ApiTokenStatus, 4000);
+                _toastService?.ShowToast(panel.StatusMessage, 5000);
 
             _lastAuthenticationRequired = IsSignedOutOfApi;
             _authStateObserved = true;
         }
 
-        private string DescribeSignedIn()
+        private void ApplyLockout(AuthPanelState panel)
         {
-            var who = string.IsNullOrWhiteSpace(_settings.ApiEmail) ? "Signed in" : $"Signed in as {_settings.ApiEmail}";
+            IsLockedOut = panel.IsLockedOut;
+            _lockedUntilUtc = panel.LockedUntilUtc;
+            LockoutCountdown = panel.IsLockedOut
+                ? AuthPanelState.DescribeLockoutCountdown(_lockedUntilUtc, DateTime.UtcNow)
+                : string.Empty;
 
-            // The expiry is an upper bound rather than a promise - the server can revoke the token
-            // long before it - so it is shown as context next to who is signed in, not as a
-            // countdown to anything the user has to act on.
-            return _settings.ApiTokenExpiresAtUtc is { } expiry
-                ? $"{who} · session valid until {expiry.ToLocalTime():g}"
-                : who;
+            if (!panel.IsLockedOut)
+            {
+                _lockoutTimer?.Stop();
+                return;
+            }
+
+            // Started lazily, and only while a lockout is actually running - a timer ticking for
+            // the life of the app to service a state that is almost never true would be waste.
+            _lockoutTimer ??= CreateLockoutTimer();
+            _lockoutTimer.Start();
+        }
+
+        private DispatcherTimer CreateLockoutTimer()
+        {
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            timer.Tick += (_, _) =>
+            {
+                LockoutCountdown = AuthPanelState.DescribeLockoutCountdown(_lockedUntilUtc, DateTime.UtcNow);
+                if (!string.IsNullOrEmpty(LockoutCountdown))
+                    return;
+
+                // The wait is over. Re-read the auth state rather than just flipping the flag: the
+                // provider clears an expired lockout itself, and this keeps the two in step.
+                timer.Stop();
+                RefreshSyncStatus();
+            };
+
+            return timer;
         }
 
         // Fires on the sync timer's thread, not the UI's, so everything it touches is posted
