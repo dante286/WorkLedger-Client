@@ -820,6 +820,69 @@
                             <TextBlock VerticalAlignment="Center" Text="{Binding DeviceId}" FontFamily="{DynamicResource FontMono}" FontSize="12" />
                         </StackPanel>
 
+                        <!-- WL-141: where this account is signed in. Signed-in only - there is no
+                             token to ask with otherwise, and nothing to show.
+
+                             The identifier on screen is the DeviceId GUID, the same value stamped as
+                             OriginDeviceId on every row this install writes. The server's internal
+                             row id is never on the wire, exactly as synced entities are addressed by
+                             SyncId and never by their local Id. -->
+                        <StackPanel Spacing="{DynamicResource SpacingMedium}" IsVisible="{Binding !IsSignedOutOfApi}">
+                            <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                                <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}">Devices on this account</TextBlock>
+                                <Button Command="{Binding LoadDevicesCommand}"
+                                        Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
+                                        FontSize="12" FontWeight="500" Padding="7,4" CornerRadius="6"
+                                        VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
+                                    <TextBlock Text="Refresh" />
+                                </Button>
+                                <TextBlock VerticalAlignment="Center" FontSize="12" Foreground="{DynamicResource TextSecondary}"
+                                           IsVisible="{Binding IsLoadingDevices}" Text="Loading..." />
+                            </StackPanel>
+
+                            <TextBlock IsVisible="{Binding DeviceListMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                       Text="{Binding DeviceListMessage}" TextWrapping="Wrap" MaxWidth="560"
+                                       FontSize="12" Foreground="{DynamicResource TextSecondary}" />
+
+                            <ItemsControl ItemsSource="{Binding Devices}" HorizontalAlignment="Left">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:AccountDeviceViewModel">
+                                        <Border Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Border}"
+                                                BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,0,6">
+                                            <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                                                <StackPanel Spacing="2" Width="330">
+                                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                                        <TextBlock Text="{Binding Label}" FontWeight="600" FontSize="13" />
+                                                        <Border Background="{DynamicResource Surface2}" CornerRadius="4" Padding="5,1"
+                                                                IsVisible="{Binding IsCurrent}" VerticalAlignment="Center">
+                                                            <TextBlock Text="{Binding CurrentBadge}" FontSize="11"
+                                                                       Foreground="{DynamicResource TextSecondary}" />
+                                                        </Border>
+                                                    </StackPanel>
+                                                    <TextBlock Text="{Binding LastSeen}" FontSize="12"
+                                                               Foreground="{DynamicResource TextSecondary}" />
+                                                    <TextBlock Text="{Binding DeviceId}" FontSize="11"
+                                                               FontFamily="{DynamicResource FontMono}"
+                                                               Foreground="{DynamicResource TextSecondary}" />
+                                                </StackPanel>
+                                                <!-- Offered for the current device too. It is permitted server-side and
+                                                     means "sign this app out"; the button says so and the confirmation
+                                                     says it again. A silent guard here would be this client overriding
+                                                     a deliberate server decision. -->
+                                                <Button Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).RemoveDeviceCommand}"
+                                                        CommandParameter="{Binding}"
+                                                        Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
+                                                        FontSize="12" FontWeight="500" Padding="8,5" CornerRadius="6"
+                                                        VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
+                                                    <TextBlock Text="{Binding RemoveLabel}" />
+                                                </Button>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+
                         <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
                             <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Status</TextBlock>
                             <TextBlock VerticalAlignment="Center" Text="{Binding ApiTokenStatus}" FontSize="12"

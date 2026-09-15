@@ -150,6 +150,21 @@ namespace WorkLedger_Client.ViewModels
         // behaviour item 4e exists to avoid - just once a session instead of once a tick.
         private bool _authStateObserved;
 
+        // WL-141. The account's devices, in the order the server sent them: most-recently-seen
+        // first, never-seen last. Rebuilt wholesale on every refresh rather than merged, because
+        // LastSeenUtc moves on every sync from every device and a stale row is a lie about where
+        // someone is signed in.
+        public ObservableCollection<AccountDeviceViewModel> Devices { get; } = new();
+
+        // What to say instead of the list: "nothing asked yet", "couldn't reach the server", or the
+        // reason there is nothing to show. Separate from an empty collection on purpose - a failed
+        // request and an account with no devices are not the same fact.
+        [ObservableProperty]
+        private string _deviceListMessage = string.Empty;
+
+        [ObservableProperty]
+        private bool _isLoadingDevices;
+
         public bool IsFileSyncSelected => SyncMode == SyncMode.File;
 
         public bool IsApiSyncSelected => SyncMode == SyncMode.Api;
@@ -305,6 +320,99 @@ namespace WorkLedger_Client.ViewModels
             SignupSecret = string.Empty;
         }
 
+        /// <summary>
+        /// Re-reads the account's devices. WL-141.
+        /// </summary>
+        [RelayCommand]
+        private async Task LoadDevicesAsync()
+        {
+            if (IsLoadingDevices)
+                return;
+
+            IsLoadingDevices = true;
+            try
+            {
+                await ReloadDevicesAsync();
+            }
+            finally
+            {
+                IsLoadingDevices = false;
+            }
+        }
+
+        /// <summary>
+        /// Detaches one device from the account, after a confirmation that says what it does and
+        /// does not do. WL-141.
+        /// </summary>
+        /// <remarks>
+        /// The current device is offered like any other. It is permitted server-side and means
+        /// "sign this app out" - see <see cref="AccountDeviceViewModel.ConfirmationMessage"/>, which
+        /// says so in the dialog rather than leaving the button to surprise someone.
+        /// </remarks>
+        [RelayCommand]
+        private async Task RemoveDeviceAsync(AccountDeviceViewModel? device)
+        {
+            if (device is null)
+                return;
+
+            var confirmed = await ConfirmAsync(
+                "Remove device", device.ConfirmationMessage, "Remove device");
+
+            if (!confirmed)
+                return;
+
+            var (success, message) = await _syncCoordinator.RemoveDeviceAsync(device.DeviceId);
+
+            // Either way: a success changed the list, and a failure may have been a revocation that
+            // changed the whole panel.
+            await RefreshAuthPanelAsync();
+            _toastService?.ShowToast(message, success ? 5000 : 4500);
+        }
+
+        // Shared by every destructive action in this panel. Returns false when there is no window
+        // to parent a dialog to, which is the safe answer: no confirmation, no action.
+        private static async Task<bool> ConfirmAsync(string title, string message, string confirmLabel)
+        {
+            var desktop = Avalonia.Application.Current?.ApplicationLifetime
+                as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime;
+
+            if (desktop?.MainWindow is not { } owner)
+                return false;
+
+            var dialog = new Views.ConfirmationDialog(title, message, confirmLabel);
+            return await dialog.ShowDialog<bool>(owner);
+        }
+
+        // Pulls the device list fresh. Signed out there is nothing to ask for and no token to ask
+        // with, so the list is emptied rather than left showing the previous session's devices.
+        private async Task ReloadDevicesAsync()
+        {
+            if (_settings.SyncMode != SyncMode.Api || !_syncCoordinator.ApiAuth.CanSync)
+            {
+                Devices.Clear();
+                DeviceListMessage = string.Empty;
+                return;
+            }
+
+            var outcome = await _syncCoordinator.GetDevicesAsync();
+
+            Devices.Clear();
+            if (!outcome.Success)
+            {
+                DeviceListMessage = outcome.ErrorMessage ?? "Couldn't load this account's devices.";
+                return;
+            }
+
+            foreach (var device in outcome.Devices)
+                Devices.Add(new AccountDeviceViewModel(device));
+
+            // An account always has at least the device asking, so an empty list here means the
+            // server answered with something unexpected rather than "you have no devices".
+            DeviceListMessage = Devices.Count == 0
+                ? "The server reported no devices for this account."
+                : string.Empty;
+        }
+
         [RelayCommand]
         private Task RefreshCapabilitiesAsync() => RefreshAuthPanelAsync(refreshCapabilities: true);
 
@@ -363,6 +471,10 @@ namespace WorkLedger_Client.ViewModels
                 {
                     _signedInDisplayName = null;
                 }
+
+                // WL-141. After whoami, so a session revoked elsewhere has already been discovered
+                // and this doesn't spend a second request finding the same 401 out again.
+                await ReloadDevicesAsync();
             }
 
             RefreshSyncStatus();

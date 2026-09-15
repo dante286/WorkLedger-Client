@@ -14,7 +14,7 @@
 
   <Border Padding="20" Background="{DynamicResource Surface}">
     <StackPanel Spacing="20">
-      <TextBlock FontFamily="{DynamicResource FontBody}" FontSize="14">
+      <TextBlock FontFamily="{DynamicResource FontBody}" FontSize="14" IsVisible="{Binding HasPrompt}">
         <Run Text="Are you sure you want to" />
         <Run Text="{Binding Action}" />
         <Run Text="this" />
@@ -22,8 +22,14 @@
         <Run Text="?" />
       </TextBlock>
 
+      <!-- WL-141/WL-143: the confirmations in the account panel are paragraphs, not a sentence.
+           What is NOT being deleted is the part that has to be read, so it wraps rather than being
+           truncated into a reassuring half-statement. -->
+      <TextBlock FontFamily="{DynamicResource FontBody}" FontSize="13" IsVisible="{Binding HasMessage}"
+                 Text="{Binding Message}" TextWrapping="Wrap" LineHeight="19" />
+
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
-        <Button Content="No" 
+        <Button Content="{Binding CancelLabel}" 
                 Click="OnNo" 
                 MinWidth="80" 
                 Background="{DynamicResource Surface}"
@@ -37,7 +43,7 @@
             </Style>
           </Button.Styles>
         </Button>
-        <Button Content="Yes" 
+        <Button Content="{Binding ConfirmLabel}" 
                 Click="OnYes" 
                 IsDefault="True" 
                 MinWidth="80"
