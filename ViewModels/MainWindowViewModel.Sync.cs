@@ -180,6 +180,17 @@ namespace WorkLedger_Client.ViewModels
         [ObservableProperty]
         private string _confirmNewPassword = string.Empty;
 
+        // WL-143. The danger zone, collapsed by default and requiring two deliberate inputs once
+        // opened. Neither field is persisted; both are cleared the moment the call returns.
+        [ObservableProperty]
+        private bool _isDangerZoneOpen;
+
+        [ObservableProperty]
+        private string _deleteAccountPassword = string.Empty;
+
+        [ObservableProperty]
+        private string _deleteAccountConfirmEmail = string.Empty;
+
         public bool IsFileSyncSelected => SyncMode == SyncMode.File;
 
         public bool IsApiSyncSelected => SyncMode == SyncMode.Api;
@@ -514,6 +525,73 @@ namespace WorkLedger_Client.ViewModels
         }
 
         [RelayCommand]
+        private void ToggleDangerZone()
+        {
+            IsDangerZoneOpen = !IsDangerZoneOpen;
+            ClearDeleteAccountForm();
+        }
+
+        /// <summary>
+        /// Deletes the account on the server. WL-143. <b>Immediate, total, irreversible.</b>
+        /// </summary>
+        /// <remarks>
+        /// Three gates before anything is sent, deliberately: the section is collapsed, the email
+        /// has to be typed to match, and the confirmation has to be accepted. The email is checked
+        /// <i>locally first</i> - the server checks it too, but only after it has checked the
+        /// password, so letting a typo through would spend one of the five attempts standing
+        /// between this user and a lockout for a mistake this client can see.
+        /// <para>
+        /// On success the session is stood down and sync is switched off by the coordinator; the
+        /// two lines below are this half of it, keeping the bound properties in step so the next
+        /// autosave does not write the deleted account's mode and address straight back.
+        /// </para>
+        /// <para>
+        /// On failure <b>nothing changes</b> - not the token, not the mode, not a single local row.
+        /// A failed guard leaves the account fully intact server-side, so anything cleared here
+        /// would invent the problem the guard just prevented.
+        /// </para>
+        /// </remarks>
+        [RelayCommand]
+        private async Task DeleteAccountAsync()
+        {
+            var confirmed = await ConfirmAsync(
+                "Delete account",
+                AuthPanelState.DescribeAccountDeletion(_settings.ApiEmail),
+                "Delete permanently");
+
+            if (!confirmed)
+                return;
+
+            var password = DeleteAccountPassword;
+            var confirmEmail = DeleteAccountConfirmEmail;
+            ClearDeleteAccountForm();
+
+            var (success, message) = await _syncCoordinator.DeleteAccountAsync(password, confirmEmail);
+            if (success)
+            {
+                // The coordinator has already written both to settings. Mirroring them into the
+                // bound properties is what stops the next autosave - which rebuilds settings from
+                // these - putting the deleted account's email and Api mode back.
+                ApiEmail = string.Empty;
+                SyncMode = SyncMode.Off;
+
+                IsDangerZoneOpen = false;
+                IsChangePasswordOpen = false;
+            }
+
+            await RefreshAuthPanelAsync();
+
+            // Long, because it is the only place the user is told their local work survived.
+            _toastService?.ShowToast(message, success ? 9000 : 5000);
+        }
+
+        private void ClearDeleteAccountForm()
+        {
+            DeleteAccountPassword = string.Empty;
+            DeleteAccountConfirmEmail = string.Empty;
+        }
+
+        [RelayCommand]
         private Task RefreshCapabilitiesAsync() => RefreshAuthPanelAsync(refreshCapabilities: true);
 
         [RelayCommand]
@@ -530,6 +608,8 @@ namespace WorkLedger_Client.ViewModels
             // password left in a collapsed form is the kind of thing that surprises someone later.
             IsChangePasswordOpen = false;
             ClearPasswordForm();
+            IsDangerZoneOpen = false;
+            ClearDeleteAccountForm();
 
             await RefreshAuthPanelAsync();
 

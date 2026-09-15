@@ -941,6 +941,59 @@
                             </Border>
                         </StackPanel>
 
+                        <!-- WL-143: the danger zone. Collapsed by default, and it stays that way
+                             until someone deliberately opens it - this is meant to be the hardest
+                             thing in the panel to do by accident, and three separate gates (open
+                             the section, type the address, accept the confirmation) are what makes
+                             it so. -->
+                        <StackPanel Spacing="{DynamicResource SpacingMedium}" IsVisible="{Binding !IsSignedOutOfApi}">
+                            <Button Command="{Binding ToggleDangerZoneCommand}" HorizontalAlignment="Left"
+                                    Background="{DynamicResource Surface}" Foreground="{DynamicResource TextSecondary}"
+                                    FontSize="12" FontWeight="500" Padding="8,5" CornerRadius="7"
+                                    BorderThickness="1" BorderBrush="{DynamicResource Border}">
+                                <TextBlock Text="Delete this account..." />
+                            </Button>
+
+                            <Border IsVisible="{Binding IsDangerZoneOpen}"
+                                    Background="{DynamicResource Surface}" BorderBrush="{DynamicResource RedDanger}"
+                                    BorderThickness="1" CornerRadius="8" Padding="12" HorizontalAlignment="Left">
+                                <StackPanel Spacing="{DynamicResource SpacingMedium}" MaxWidth="480">
+                                    <TextBlock Text="Delete account" FontWeight="600" FontSize="13"
+                                               Foreground="{DynamicResource RedDanger}" />
+                                    <TextBlock TextWrapping="Wrap" FontSize="12" LineHeight="18"
+                                               Foreground="{DynamicResource TextSecondary}"
+                                               Text="This deletes everything the server holds for this account, permanently and immediately. There is no undo. Your projects, tasks and time entries stay on this device - use Export CSV on the Reports tab first if you want a copy somewhere else." />
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                                        <TextBlock VerticalAlignment="Center" Width="140" Foreground="{DynamicResource TextSecondary}">Password</TextBlock>
+                                        <TextBox Width="240" PasswordChar="&#x2022;" Text="{Binding DeleteAccountPassword, Mode=TwoWay}" />
+                                    </StackPanel>
+                                    <!-- Typed, not pre-filled. A confirmation you can accept without
+                                         reading is not a confirmation, and this is also the check
+                                         that runs BEFORE anything is sent - so a typo costs nothing
+                                         against the server's failed-password counter. -->
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                                        <TextBlock VerticalAlignment="Center" Width="140" Foreground="{DynamicResource TextSecondary}">Type your email</TextBlock>
+                                        <TextBox Width="240" Text="{Binding DeleteAccountConfirmEmail, Mode=TwoWay}"
+                                                 Watermark="{Binding ApiEmail}" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                                        <Button Command="{Binding DeleteAccountCommand}"
+                                                Background="{DynamicResource RedDanger}" Foreground="White"
+                                                FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
+                                                BorderThickness="0">
+                                            <TextBlock Text="Delete account permanently" />
+                                        </Button>
+                                        <Button Command="{Binding ToggleDangerZoneCommand}"
+                                                Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
+                                                FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
+                                                BorderThickness="1" BorderBrush="{DynamicResource Border}">
+                                            <TextBlock Text="Cancel" />
+                                        </Button>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
                         <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
                             <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Status</TextBlock>
                             <TextBlock VerticalAlignment="Center" Text="{Binding ApiTokenStatus}" FontSize="12"

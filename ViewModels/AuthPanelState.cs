@@ -192,6 +192,43 @@ namespace WorkLedger_Client.ViewModels
         }
 
         /// <summary>
+        /// WL-143: the confirmation shown before <c>DELETE /auth/account</c>.
+        /// </summary>
+        /// <remarks>
+        /// <b>The order of the four statements is the specification, not a preference.</b> Someone
+        /// reading a destructive confirmation reads the top of it and skims the rest, so the two
+        /// facts that cannot be recovered from - it is immediate, and there is no undo - go first,
+        /// while the reassurance goes after them. Putting "your local data is kept" first would
+        /// have people stop reading at the reassurance and miss that the server's copy goes
+        /// permanently.
+        /// <list type="number">
+        /// <item><description>The server's copy is deleted permanently and immediately.</description></item>
+        /// <item><description>There is no undo - no grace period exists server-side.</description></item>
+        /// <item><description>Local data on this device is kept.</description></item>
+        /// <item><description>The Reports tab's CSV export is how to keep a copy elsewhere.</description></item>
+        /// </list>
+        /// The fourth is the honest answer to "can I take my data with me first?" and it points at
+        /// something already in the app. The server's <c>/reports/*?format=csv</c> is deliberately
+        /// not offered instead: this client does not consume the server's report endpoints at all,
+        /// and building a second export path against an account that is about to stop existing
+        /// would be the worst moment to introduce one.
+        /// </remarks>
+        public static string DescribeAccountDeletion(string? email)
+        {
+            var who = string.IsNullOrWhiteSpace(email) ? "this account" : email.Trim();
+
+            return $"Delete {who} from the server?\n\n"
+                   + "Everything the server holds for this account - every project, task, time entry "
+                   + "and device - is deleted permanently and immediately.\n\n"
+                   + "There is no undo. The server keeps no copy and has no grace period.\n\n"
+                   + "Your work on THIS device is kept. Nothing local is deleted: every project, "
+                   + "task and time entry stays exactly where it is, and the app keeps working "
+                   + "offline. Sync is switched off, because there will be no account to sync with.\n\n"
+                   + "To keep a copy somewhere else, cancel and use Export CSV on the Reports tab "
+                   + "first.";
+        }
+
+        /// <summary>
         /// Client-side validation for a new password. Null when it is acceptable.
         /// </summary>
         /// <remarks>
