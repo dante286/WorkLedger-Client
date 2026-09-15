@@ -2,12 +2,17 @@
 
 These files are **copies**, not originals. The source of truth is
 [`WorkLedger-API`](https://github.com/dante286/WorkLedger-API), at
-`src/WorkLedger.Contracts/`, as of commit **`2065662`** (the last commit to touch that project;
-repo `main` was at `ced79aa`).
+`src/WorkLedger.Contracts/`, as of commit **`3d27c86`** (the last commit to touch that project;
+repo `main` was at `08f02f0`).
 
-Re-vendored 2026-08-19 from the previous pin (`3e6e955`) — WL-100. The only shape change since then was
-`SyncItemResult.AuthoritativeOperation` (WL-98), consumed as of WL-101 — see "What the server tells us
-on a rejection" below.
+Re-vendored 2026-09-15 from the previous pin (`2065662`) — WL-133, the client half of the server's
+S6–S8 user-accounts work (see `WorkLedger-API/plans/S9-client-handoff.md`, which is authoritative for
+this cutover). **Everything under `Sync/` and `Payloads/` came through untouched** — verified
+file-by-file, the sole difference being one XML doc word in `SyncConstants.cs` (`(AccountId, SyncId)` →
+`(UserId, SyncId)`). The push/pull shapes, `SyncJson.Options`' PascalCase policy, the positional
+`SyncPushResponse.Results` and `SyncItemResult.AuthoritativeOperation` are all exactly what they were.
+The change is confined to `AuthDtos.cs` — see "How a token is obtained, and how it dies" below.
+
 `ReportDtos.cs` is deliberately **not** vendored: the client computes its own local reports and never
 calls `/reports/*`.
 
@@ -30,6 +35,29 @@ was rejected — this repo's CI checks out only this repo, so it would build loc
   directives (this project doesn't enable `ImplicitUsings`) and a provenance header.
 - `Tests/WorkLedger.Tests/SyncContractGuardTests.cs` asserts these still line up with the client's
   own constants and payload shapes, so a rename on either side fails the build rather than the sync.
+
+## How a token is obtained, and how it dies
+
+`AuthDtos.cs` is the only file this re-vendor actually changed, and it changed completely.
+`RegisterDeviceRequest`/`RegisterDeviceResponse` are **gone**: `POST /auth/register-device` no longer
+exists server-side, and `POST /auth/login` (`LoginRequest` → `LoginResponse`) is now the only thing
+that mints a token. Enrolling the device is a side effect of logging in, on the same `DeviceId` this
+install already stamps as `OriginDeviceId` — there is still exactly one device identifier.
+`WhoAmIResponse` was reshaped from `(AccountId, DeviceId)` to `(UserId, Email, DisplayName, DeviceId)`.
+
+The consequence that matters more than the renames: **a 401 is now a statement about the session, not
+about the token's age.** The server validates a security stamp on every request, so a token can be
+killed mid-session by a password change, a sign-out-everywhere, the device row being deleted from
+another machine, or the account being deleted — none of which this install can see coming. "My token
+aged out, get another one" was a safe reading under device bootstrap, where re-authenticating needed
+only a secret the app held. It is the wrong reading now: re-authenticating needs a password, which this
+client deliberately does not store, and the server locks an account after five consecutive failed
+logins. The correct response to a 401 is therefore to ask a human to sign in, never to retry.
+
+The remaining auth records (`RegisterUserRequest`, `UserSummary`, `AuthCapabilitiesResponse`,
+`ChangePasswordRequest`, `DeviceSummary`, `DeleteAccountRequest`) back registration, capability
+discovery and account management — vendored because they are part of the contract, consumed by later
+plans rather than by `ApiSyncProvider` today.
 
 ## What the server tells us on a rejection
 

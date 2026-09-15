@@ -1,4 +1,4 @@
-// Vendored verbatim from WorkLedger-API, src/WorkLedger.Contracts/Sync/SyncDtos.cs @ 2065662.
+// Vendored verbatim from WorkLedger-API, src/WorkLedger.Contracts/Sync/SyncDtos.cs @ 3d27c86.
 // The server is the source of truth for these shapes - see Sync/Contracts/README.md before editing.
 using System;
 using System.Collections.Generic;
