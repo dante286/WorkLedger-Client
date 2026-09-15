@@ -1,9 +1,12 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
 using System.Threading.Tasks;
 using WorkLedger_Client.Models;
 using WorkLedger_Client.Services;
+using WorkLedger_Client.Sync;
 using Xunit;
 
 namespace WorkLedger.Tests
@@ -117,15 +120,216 @@ namespace WorkLedger.Tests
         }
 
         [Fact]
-        public async Task RegisterDeviceAsync_WithoutAnEndpoint_AsksForOneInsteadOfCalling()
+        public async Task SignInAsync_WithoutAnEndpoint_AsksForOneInsteadOfCalling()
         {
             _alpha.Settings.SyncMode = SyncMode.Api;
             _alpha.Settings.ApiEndpoint = string.Empty;
 
-            var (success, message) = await _alpha.Coordinator.RegisterDeviceAsync("secret");
+            var (success, message) = await _alpha.Coordinator.SignInAsync("person@example.com", "hunter2");
 
             Assert.False(success);
             Assert.Equal("Enter an API endpoint first.", message);
+        }
+
+        // ------------------------------------------------- WL-138: the account-ownership guard
+        //
+        // These drive a real SignInAsync against a scripted HttpMessageHandler, because the guard
+        // can only run once a login has returned a UserId - which is the whole reason it has to
+        // live at this level rather than somewhere cheaper to test.
+
+        [Fact]
+        public async Task SignInAsync_AgainstAnUnclaimedDatabase_AdoptsItWithNoPromptAtAll()
+        {
+            // THE OFFLINE-FIRST PATH, and the assertion here is the ABSENCE of friction: a week's
+            // work done with no server, then a sign-in, and everything is simply kept. If this
+            // ever starts prompting or warning, the guard has broken the premise of the product.
+            await _alpha.Db.SaveProjectAsync(new Project { Name = "A week of offline work" });
+
+            var signedIn = await SignInWithScriptedServerAsync(_alpha, userId: 42, email: "owner@example.com");
+
+            Assert.True(signedIn.Success);
+            Assert.Equal("Signed in as owner@example.com.", signedIn.Message);
+
+            var owner = await _alpha.Db.GetDatabaseOwnerAsync();
+            Assert.Equal(42, owner!.UserId);
+            Assert.Equal("owner@example.com", owner.Email);
+            Assert.Equal("issued-token", _alpha.Settings.ApiToken);
+
+            // Nothing was taken away to make room for the account's own data.
+            Assert.Single(await _alpha.Db.GetAllAsync<Project>());
+        }
+
+        [Fact]
+        public async Task SignInAsync_AsADifferentAccount_IsRefusedAndWritesNothing()
+        {
+            await _alpha.Db.ClaimDatabaseAsync(42, "owner@example.com", ApiEndpoint);
+            await _alpha.Db.SaveProjectAsync(new Project { Name = "The first account's work" });
+            var queuedBefore = (await _alpha.Db.Connection.Table<SyncQueue>().ToListAsync()).Count;
+
+            var signedIn = await SignInWithScriptedServerAsync(_alpha, userId: 99, email: "someone.else@example.com");
+
+            Assert.False(signedIn.Success);
+            Assert.Contains("owner@example.com", signedIn.Message);
+            Assert.Contains("someone.else@example.com", signedIn.Message);
+            // The remedy that already exists, named rather than left to be discovered.
+            Assert.Contains("data directory", signedIn.Message);
+
+            // Nothing written: not the stamp, not the token, not the rows, and - the one that gets
+            // missed - not the pending queue, whose rows are addressed to the first account.
+            var owner = await _alpha.Db.GetDatabaseOwnerAsync();
+            Assert.Equal(42, owner!.UserId);
+            Assert.Equal("owner@example.com", owner.Email);
+            Assert.Equal(string.Empty, _alpha.Settings.ApiToken);
+            Assert.Null(_alpha.Settings.ApiTokenExpiresAtUtc);
+            Assert.Single(await _alpha.Db.GetAllAsync<Project>());
+            Assert.Equal(queuedBefore, (await _alpha.Db.Connection.Table<SyncQueue>().ToListAsync()).Count);
+        }
+
+        [Fact]
+        public async Task SignInAsync_SameAccountAtAMovedEndpoint_IsAllowedAndSaysSo()
+        {
+            // A server that moved from a LAN address to a domain name is ordinary and legitimate,
+            // so this warns and records the new address rather than refusing.
+            await _alpha.Db.ClaimDatabaseAsync(42, "owner@example.com", "http://192.168.1.10:8080");
+
+            var signedIn = await SignInWithScriptedServerAsync(_alpha, userId: 42, email: "owner@example.com");
+
+            Assert.True(signedIn.Success);
+            Assert.Contains("192.168.1.10", signedIn.Message);
+
+            var owner = await _alpha.Db.GetDatabaseOwnerAsync();
+            Assert.Equal(ApiEndpoint, owner!.ApiEndpoint);
+        }
+
+        // THE TEST THAT JUSTIFIES PUTTING THE MARKER IN THE DATABASE RATHER THAN IN SETTINGS.
+        //
+        // Restoring a backup pairs a database with whatever settings.json happens to sit next to
+        // it - a supported operation, not a corner case. A guard keyed on AppSettings.ApiEmail
+        // would wave this through silently, because the settings file knows nothing. The stamp
+        // travels inside workledger.db, so it doesn't.
+        [Fact]
+        public async Task ADatabaseRestoredNextToBlankSettings_StillRefusesTheWrongAccount()
+        {
+            // Built and closed here rather than reusing a shared device, so the file really is
+            // at rest before it is copied - which is what a restore does.
+            var originalDirectory = Path.Combine(_root, "original");
+            Directory.CreateDirectory(originalDirectory);
+            var originalSettings = new SettingsService(originalDirectory);
+
+            var original = new LocalDbService(originalSettings.DatabasePath, Guid.NewGuid().ToString());
+            await original.Initialization;
+            await original.ClaimDatabaseAsync(42, "owner@example.com", ApiEndpoint);
+            await original.Connection.CloseAsync();
+
+            var restoredInto = Path.Combine(_root, "restored");
+            Directory.CreateDirectory(restoredInto);
+
+            // The database travels; the settings file does not.
+            var settingsService = new SettingsService(restoredInto);
+            File.Copy(originalSettings.DatabasePath, settingsService.DatabasePath);
+
+            var blankSettings = settingsService.LoadSettings();
+            Assert.Equal(string.Empty, blankSettings.ApiEmail);
+
+            blankSettings.SyncMode = SyncMode.Api;
+            blankSettings.ApiEndpoint = ApiEndpoint;
+            blankSettings.SyncInterval = SyncInterval.Disabled;
+
+            var db = new LocalDbService(settingsService.DatabasePath, blankSettings.DeviceId);
+            await db.Initialization;
+
+            using var coordinator = new SyncCoordinator(
+                db, settingsService, blankSettings, new HttpClient(ScriptedLogin(99, "someone.else@example.com")));
+
+            var signedIn = await coordinator.SignInAsync("someone.else@example.com", "hunter2");
+
+            Assert.False(signedIn.Success);
+            Assert.Contains("owner@example.com", signedIn.Message);
+
+            await db.Connection.CloseAsync();
+        }
+
+        [Fact]
+        public async Task SignInAsync_AdoptingADatabase_ResetsThePullCursor()
+        {
+            // WL-138 item 6f: LastSyncedAtUtc is account-scoped state living in a global field.
+            // Carried across an ownership change it would start the new account's first pull from
+            // an instant that means nothing to it, silently skipping everything older.
+            _alpha.Settings.LastSyncedAtUtc = DateTime.UtcNow.AddDays(-3);
+
+            Assert.True((await SignInWithScriptedServerAsync(_alpha, 42, "owner@example.com")).Success);
+
+            Assert.Null(_alpha.Settings.LastSyncedAtUtc);
+        }
+
+        [Fact]
+        public async Task SignInAsync_OnAPreS6DatabaseThatHadSynced_ClaimsItRatherThanRefusing()
+        {
+            // WL-138 item 6d. Such a database has no stamp and no recoverable owner, so it is
+            // backfilled as claimed-by-unknown and the first post-upgrade sign-in fills in the
+            // identity - the same shape as the server's own POST /auth/claim.
+            _alpha.Settings.LastSyncedAtUtc = DateTime.UtcNow.AddDays(-30);
+            await _alpha.Db.BackfillDatabaseOwnerAsync(hasSyncedBefore: true);
+
+            var backfilled = await _alpha.Db.GetDatabaseOwnerAsync();
+            Assert.NotNull(backfilled);
+            Assert.False(backfilled!.HasIdentity);
+
+            Assert.True((await SignInWithScriptedServerAsync(_alpha, 42, "owner@example.com")).Success);
+
+            var claimed = await _alpha.Db.GetDatabaseOwnerAsync();
+            Assert.True(claimed!.HasIdentity);
+            Assert.Equal(42, claimed.UserId);
+        }
+
+        [Fact]
+        public async Task SignOut_ClearsTheTokenAndNothingElse()
+        {
+            // WL-138 item 6h: an auth event, never a data event. The app has to stay fully usable
+            // with no server, so signing out must not cost the user anything they can see.
+            await _alpha.Db.SaveProjectAsync(new Project { Name = "Still mine afterwards" });
+            Assert.True((await SignInWithScriptedServerAsync(_alpha, 42, "owner@example.com")).Success);
+
+            _alpha.Settings.LastSyncedAtUtc = DateTime.UtcNow.AddMinutes(-5);
+            var cursor = _alpha.Settings.LastSyncedAtUtc;
+            var queued = (await _alpha.Db.Connection.Table<SyncQueue>().ToListAsync()).Count;
+
+            _alpha.Coordinator.SignOut();
+
+            Assert.Equal(string.Empty, _alpha.Settings.ApiToken);
+            Assert.Null(_alpha.Settings.ApiTokenExpiresAtUtc);
+
+            // Kept, every one of them: the email so the form prefills, and the rest because none
+            // of it was ever about who was signed in.
+            Assert.Equal("owner@example.com", _alpha.Settings.ApiEmail);
+            Assert.Equal(cursor, _alpha.Settings.LastSyncedAtUtc);
+            Assert.Single(await _alpha.Db.GetAllAsync<Project>());
+            Assert.Equal(queued, (await _alpha.Db.Connection.Table<SyncQueue>().ToListAsync()).Count);
+            Assert.NotNull(await _alpha.Db.GetDatabaseOwnerAsync());
+        }
+
+        private const string ApiEndpoint = "https://workledger.example.com";
+
+        // One scripted /auth/login response and nothing else - these tests are about what happens
+        // around the sign-in, not about the sync that may follow it.
+        private static ApiSyncProviderTests.RecordingHandler ScriptedLogin(int userId, string email)
+            => new ApiSyncProviderTests.RecordingHandler().EnqueueJson(HttpStatusCode.OK, new
+            {
+                Token = "issued-token",
+                ExpiresAtUtc = DateTime.UtcNow.AddDays(365),
+                User = new { Id = userId, Email = email, DisplayName = (string?)null, CreatedAtUtc = DateTime.UtcNow }
+            });
+
+        private static async Task<(bool Success, string Message)> SignInWithScriptedServerAsync(
+            Device device, int userId, string email)
+        {
+            device.Settings.SyncMode = SyncMode.Api;
+            device.Settings.ApiEndpoint = ApiEndpoint;
+
+            using var coordinator = new SyncCoordinator(
+                device.Db, device.SettingsService, device.Settings, new HttpClient(ScriptedLogin(userId, email)));
+
+            return await coordinator.SignInAsync(email, "hunter2");
         }
 
         [Fact]

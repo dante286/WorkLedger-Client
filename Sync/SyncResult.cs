@@ -55,6 +55,16 @@ namespace WorkLedger_Client.Sync
         // and the permanent rejections listed above; RejectedSyncQueueIds is what tells the
         // two apart.
         public List<SyncFailure> Failures { get; init; } = new();
+
+        // WL-134: this push got nowhere because there is no usable session - no token, an
+        // expired one, or one the server has revoked. Threaded out through SyncRunResult so the
+        // UI can say "you've been signed out" instead of "sync failed: 401", which is the
+        // difference between a message someone can act on and one they file a bug about.
+        //
+        // The rows involved are a TRANSPORT outcome, not a rejection: they belong in Failures
+        // and stay pending, because the server never saw them. Retiring them would discard work
+        // on the strength of a signed-out session.
+        public bool AuthenticationRequired { get; init; }
     }
 
     public class SyncFailure

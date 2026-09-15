@@ -3,6 +3,7 @@ using System.IO;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using WorkLedger.Contracts.Auth;
 using WorkLedger.Contracts.Payloads;
 using WorkLedger.Contracts.Sync;
 using WorkLedger_Client.Models;
@@ -14,6 +15,13 @@ namespace WorkLedger.Tests
     // Cheap tests that stop cross-repo drift. Sync/Contracts/ is a vendored copy of the
     // server's WorkLedger.Contracts, so nothing but these assertions makes a rename or a
     // shape change on either side fail the build rather than silently corrupt sync.
+    //
+    // WL-137. Everything below that pins the SYNC wire format is unchanged since before the
+    // server's S6-S8 user-accounts work, and that is the point: the handoff states the push/pull
+    // shapes came through untouched, and these assertions are what turns that statement into
+    // something the build can check. If one of them starts failing after a re-vendor, something
+    // moved that was not supposed to, and the fix belongs in WorkLedger-API rather than here.
+    // The auth shapes at the bottom are the half that did change.
     public class SyncContractGuardTests : IAsyncLifetime
     {
         private const string TestDeviceId = "contract-guard-device";
@@ -225,6 +233,78 @@ namespace WorkLedger.Tests
             Assert.False(task.IsArchived);
             Assert.Equal(4, task.Version);
             Assert.Equal("server-side-device", task.OriginDeviceId);
+        }
+
+        // ----------------------------------------------------------- WL-137: the auth contract
+
+        // The records that replaced device bootstrap. Round-tripped through SyncJson.Options
+        // because that is the policy ApiSyncProvider serializes every body with - a login that
+        // silently emitted camelCase would be refused by a server reading PascalCase, and the
+        // failure would look like a wrong password.
+        [Fact]
+        public void LoginRequestAndResponse_RoundTripThroughTheSharedJsonPolicy()
+        {
+            var request = new LoginRequest("person@example.com", "hunter2", "device-guid", "Laptop");
+            var json = JsonSerializer.Serialize(request, SyncJson.Options);
+
+            Assert.Contains("\"Email\":", json);
+            Assert.Contains("\"DeviceId\":", json);
+
+            var round = JsonSerializer.Deserialize<LoginRequest>(json, SyncJson.Options);
+            Assert.Equal(request, round);
+
+            var issued = new LoginResponse(
+                "jwt", DateTime.UtcNow.AddDays(365),
+                new UserSummary(7, "person@example.com", "A Person", DateTime.UtcNow));
+
+            var responseJson = JsonSerializer.Serialize(issued, SyncJson.Options);
+            var parsed = JsonSerializer.Deserialize<LoginResponse>(responseJson, SyncJson.Options);
+
+            Assert.Equal("jwt", parsed!.Token);
+            Assert.Equal(7, parsed.User.Id);
+        }
+
+        // The breaking rename from the server's S6. AccountId is gone, and a client still reading
+        // it would deserialize a UserId of 0 without throwing - which is exactly the silent
+        // failure the vendored contract exists to make impossible.
+        [Fact]
+        public void WhoAmIResponse_CarriesUserIdAndTheSignedInIdentity()
+        {
+            var whoami = new WhoAmIResponse(7, "person@example.com", "A Person", "device-guid");
+
+            Assert.Equal(7, whoami.UserId);
+            Assert.Equal("person@example.com", whoami.Email);
+
+            // A compile-time assertion written as a comment because that is the honest form of
+            // it: WhoAmIResponse.AccountId no longer exists, and so does
+            // RegisterDeviceRequest/RegisterDeviceResponse. Referencing any of them here would
+            // not fail this test - it would fail the build, which is stronger.
+            var round = JsonSerializer.Deserialize<WhoAmIResponse>(
+                JsonSerializer.Serialize(whoami, SyncJson.Options), SyncJson.Options);
+            Assert.Equal(whoami, round);
+        }
+
+        // WL-147, and the reason plan 8's own copy of this table was not to be trusted: the record
+        // has SIX fields, not four. The last two let a client warn truthfully before an attempt
+        // that would lock the account, instead of hardcoding 5 and 15 that an operator may have
+        // changed.
+        [Fact]
+        public void AuthCapabilitiesResponse_CarriesTheLockoutPolicyAsWellAsRegistration()
+        {
+            var capabilities = new AuthCapabilitiesResponse(
+                RegistrationEnabled: true,
+                RegistrationRequiresSecret: true,
+                MinPasswordLength: 12,
+                HasUnclaimedAccount: false,
+                MaxFailedLogins: 5,
+                LockoutMinutes: 15);
+
+            Assert.Equal(5, capabilities.MaxFailedLogins);
+            Assert.Equal(15, capabilities.LockoutMinutes);
+
+            var round = JsonSerializer.Deserialize<AuthCapabilitiesResponse>(
+                JsonSerializer.Serialize(capabilities, SyncJson.Options), SyncJson.Options);
+            Assert.Equal(capabilities, round);
         }
 
         private async Task<T> ReadQueuedPayloadAsync<T>(string entityType)

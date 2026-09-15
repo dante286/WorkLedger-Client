@@ -48,6 +48,36 @@ namespace WorkLedger.Tests
         }
     }
 
+    // WL-134: a provider that has a session to lose, so the timer gate (plan 8 item 4d) has
+    // something to ask. Counts calls rather than recording them - the whole assertion is that
+    // the count stays at zero.
+    public class FakeAuthenticatingSyncProvider : IAuthenticatingSyncProvider
+    {
+        public AuthStatus Auth { get; set; } = AuthStatus.SignedIn;
+
+        public int PushCalls { get; private set; }
+
+        public int PullCalls { get; private set; }
+
+        public bool AuthenticationRequired { get; set; }
+
+        public Task<SyncResult> PushAsync(IEnumerable<SyncQueue> pendingChanges)
+        {
+            PushCalls++;
+            return Task.FromResult(new SyncResult { AuthenticationRequired = AuthenticationRequired });
+        }
+
+        public Task<PullResult> PullAsync(DateTime since)
+        {
+            PullCalls++;
+
+            if (AuthenticationRequired)
+                return Task.FromResult(PullResult.Failed("401", authenticationRequired: true));
+
+            return Task.FromResult(new PullResult { ServerTime = DateTime.UtcNow });
+        }
+    }
+
     // Minimal ISyncCursorStore that keeps the cursor in memory, standing in for the
     // settings-backed one so the persistence behaviour can be asserted without touching disk.
     public class FakeCursorStore : ISyncCursorStore
@@ -87,6 +117,82 @@ namespace WorkLedger.Tests
         {
             await _db.Connection.CloseAsync();
             TryDeleteWithRetries(_dbPath);
+        }
+
+        // ----------------------------------------------- WL-134 item 4d: the timer's auth gate
+
+        // A revoked install otherwise generates a doomed round trip every 15 minutes, forever.
+        // Zero requests is the assertion - not "it fails gracefully", but that it does not ask.
+        [Theory]
+        [InlineData(AuthState.SignedOut)]
+        [InlineData(AuthState.SessionExpired)]
+        [InlineData(AuthState.SessionRevoked)]
+        [InlineData(AuthState.LockedOut)]
+        [InlineData(AuthState.RateLimited)]
+        public async Task RunTimerSyncAsync_WhenTheSessionIsNotUsable_MakesNoCallsAtAll(AuthState state)
+        {
+            await _db.SaveProjectAsync(new Project { Name = "Queued and waiting" });
+
+            var provider = new FakeAuthenticatingSyncProvider { Auth = new AuthStatus(state) };
+            var orchestrator = new SyncOrchestrator(_db, provider);
+
+            var result = await orchestrator.RunTimerSyncAsync();
+
+            Assert.Equal(0, provider.PushCalls);
+            Assert.Equal(0, provider.PullCalls);
+            Assert.False(result.Ran);
+            Assert.True(result.AuthenticationRequired);
+
+            // And the queued work is still queued - skipping a run must never settle anything.
+            var pending = await _db.Connection.Table<SyncQueue>().Where(q => q.IsSynced == false).ToListAsync();
+            Assert.Single(pending);
+        }
+
+        [Fact]
+        public async Task RunTimerSyncAsync_WhenSignedIn_RunsNormally()
+        {
+            var provider = new FakeAuthenticatingSyncProvider { Auth = AuthStatus.SignedIn };
+            var orchestrator = new SyncOrchestrator(_db, provider);
+
+            var result = await orchestrator.RunTimerSyncAsync();
+
+            Assert.True(result.Ran);
+            Assert.Equal(1, provider.PullCalls);
+        }
+
+        // A manual "sync now" deliberately does NOT check: a person asked, and a revocation that
+        // was really a server restart should get the chance to heal rather than leaving a banner
+        // nobody can clear. It costs one authenticated request and zero login attempts.
+        [Fact]
+        public async Task RunSyncAsync_WhenTheSessionIsRevoked_StillAttemptsTheRun()
+        {
+            var provider = new FakeAuthenticatingSyncProvider { Auth = AuthStatus.SessionRevoked };
+            var orchestrator = new SyncOrchestrator(_db, provider);
+
+            var result = await orchestrator.RunSyncAsync();
+
+            Assert.True(result.Ran);
+            Assert.Equal(1, provider.PullCalls);
+        }
+
+        [Fact]
+        public async Task RunSyncAsync_WhenTheProviderReportsAuthenticationRequired_SaysSoOnTheResult()
+        {
+            await _db.SaveProjectAsync(new Project { Name = "Never delivered" });
+
+            var provider = new FakeAuthenticatingSyncProvider { AuthenticationRequired = true };
+            var orchestrator = new SyncOrchestrator(_db, provider);
+
+            var result = await orchestrator.RunSyncAsync();
+
+            Assert.True(result.Ran);
+            Assert.False(result.Succeeded);
+            Assert.True(result.AuthenticationRequired);
+
+            // The rows the server never saw stay pending, so signing back in resumes rather than
+            // losing the work done while signed out.
+            var pending = await _db.Connection.Table<SyncQueue>().Where(q => q.IsSynced == false).ToListAsync();
+            Assert.Single(pending);
         }
 
         private static void TryDeleteWithRetries(string path, int maxAttempts = 5)

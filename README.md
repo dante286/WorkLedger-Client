@@ -26,7 +26,7 @@ This repository is the **client**. The backend lives in a separate repository, [
 - `SyncOrchestrator`: push → pull → merge, with last‑write‑wins conflict resolution and self‑echo suppression
 - Two transports behind one `ISyncProvider` abstraction:
   - **`FileSyncProvider`** — sync through a shared folder (Dropbox / OneDrive / network share), no server required
-  - **`ApiSyncProvider`** — sync against a self‑hosted WorkLedger-API instance, with device‑bootstrapped JWT auth
+  - **`ApiSyncProvider`** — sync against a self‑hosted WorkLedger-API instance, signing in with an email and password
 - Driven from the Settings tab: a **Sync Mode** switch (Off / Shared folder / WorkLedger API), device
   registration, a sync interval, a *Sync Now* button, and a last‑synced readout
 - A safety backup taken before the first remote change of a sync run overwrites or deletes local data
@@ -108,7 +108,7 @@ Sync is **off by default** — nothing leaves the machine until you choose a mod
 |---|---|---|
 | **Off** | — | The default. No provider is constructed and nothing is contacted. |
 | **Shared folder** | A folder both installs can see | Each push writes one JSON file into `<folder>/changes/`; each pull reads the files the other devices wrote. No server. |
-| **WorkLedger API** | A reachable [WorkLedger-API](https://github.com/dante286/WorkLedger-API) instance and its bootstrap secret | Press **Register this device** once — the server issues a JWT, which the client stores and renews itself. The secret is used for that one call and is never saved. |
+| **WorkLedger API** | A reachable [WorkLedger-API](https://github.com/dante286/WorkLedger-API) instance and an account on it | Enter your email and password and press **Sign in** once — the server issues a JWT scoped to this device and the client stores it. The password is used for that one call and is **never saved**; only the email is. This device is enrolled as a side effect of signing in. |
 
 The **Sync Interval** setting drives a background tick (or `Manual only`, in which case *Sync Now* is the only
 trigger). **Backup Before Merge** takes a copy of `settings.json` and `workledger.db` into
@@ -213,7 +213,7 @@ WorkLedger-Client/
 | API framework | C# / ASP.NET Core Minimal APIs (.NET 10) | Shares one language and one wire contract with the client |
 | Database | PostgreSQL | Authoritative datastore for all synced data |
 | ORM | EF Core + Npgsql (EF migrations) | Models, migrations, schema evolution |
-| Auth | JWT bearer, device bootstrap | One token per registered device |
+| Auth | JWT bearer, email/password sign-in | Credentials are user-level; tokens are scoped to (user, device) and can be revoked |
 | Sync logic | Last‑write‑wins over versioned entities | Handles conflicts, merges, tombstones |
 | Deployment | Docker / Docker Compose | Self‑hosted, portable, reproducible |
 
@@ -292,13 +292,17 @@ It is C# / ASP.NET Core Minimal APIs on .NET 10, EF Core + Npgsql → PostgreSQL
 deploys as a single `docker compose up` on a homelab box or small VPS. v1 is single‑account / multi‑device:
 one account, one row per registered device.
 
-In outline, it exposes device registration and `whoami`, the `/sync/push` and `/sync/pull` pair described
-above, and three read‑only report endpoints. **The endpoint list, configuration variables, deployment
-quickstart, and operational notes are documented in that repository's `README.md`** — they are deliberately
-not restated here, so the two cannot drift.
+In outline, it exposes sign-in, registration and account management, `whoami`, the `/sync/push` and
+`/sync/pull` pair described above, and three read‑only report endpoints. **The endpoint list, configuration
+variables, deployment quickstart, and operational notes are documented in that repository's `README.md`** —
+they are deliberately not restated here, so the two cannot drift.
 
-Devices enrol once against a bootstrap secret and keep a long‑lived bearer token; the client persists that
-token and re‑registers itself ahead of expiry.
+Signing in with an email and password mints a bearer token scoped to *this device*, and enrols the device as
+a side effect. The client persists the token and the email — never the password. Because tokens can be
+revoked server‑side (a password change, a sign‑out‑everywhere, this device being removed from another
+machine), a rejected token means **"you have been signed out"** rather than **"try again"**: the client stops
+syncing and waits for a person, rather than retrying credentials it does not have. Your work keeps saving
+locally throughout, and goes up when you sign back in.
 
 ### The shared contract
 

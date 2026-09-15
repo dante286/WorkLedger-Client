@@ -30,6 +30,25 @@ namespace WorkLedger_Client.Sync
         // comparison, so this counts what arrived, not what was written.
         public int ReceivedCount { get; init; }
 
+        // WL-134: this run needs a human to sign in before it can work. Deliberately one bool
+        // and not a richer failure taxonomy - there is one caller and one thing it does with
+        // this, which is route the user to the sign-in form instead of retrying forever against
+        // a token that will never work again.
+        public bool AuthenticationRequired { get; init; }
+
         public static SyncRunResult Skipped() => new() { Ran = false, Succeeded = true };
+
+        // Plan 8 item 4d: the timer declining to fire requests at a session that is known to be
+        // dead. Ran = false because nothing was attempted, and Succeeded = false because the
+        // caller should not read this as a quiet success - but no request was made, and in
+        // particular no /auth/login attempt, which is the property the whole 401 design exists
+        // to guarantee.
+        public static SyncRunResult AuthenticationNeeded(string message) => new()
+        {
+            Ran = false,
+            Succeeded = false,
+            AuthenticationRequired = true,
+            ErrorMessage = message
+        };
     }
 }

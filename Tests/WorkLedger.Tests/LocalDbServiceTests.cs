@@ -447,5 +447,113 @@ namespace WorkLedger.Tests
                 TryDeleteWithRetries(migrationDbPath);
             }
         }
+
+        // ------------------------------------------- WL-138: the database's ownership stamp
+        //
+        // See Models/DatabaseOwner for the hazard. In short: the local database has no user
+        // column, so signing in as a different account would push one user's rows into another's
+        // and pull theirs back, irreversibly, with every server-side check passing.
+
+        [Fact]
+        public async Task ANewDatabase_IsUnclaimed()
+        {
+            Assert.Null(await _service.GetDatabaseOwnerAsync());
+
+            // Unclaimed means adoptable by anyone, with no prompt - this is the offline-first
+            // path, and friction here would break the premise that the app works without a server.
+            Assert.Equal(
+                DatabaseOwnershipVerdict.Unclaimed,
+                await _service.EvaluateOwnershipAsync(1, "anyone@example.com", "https://api.example.com"));
+        }
+
+        [Fact]
+        public async Task ClaimDatabaseAsync_StampsTheOwnerAndIsIdempotent()
+        {
+            await _service.ClaimDatabaseAsync(42, "Owner@Example.com", "https://api.example.com");
+            await _service.ClaimDatabaseAsync(42, "Owner@Example.com", "https://api.example.com");
+
+            var owner = await _service.GetDatabaseOwnerAsync();
+            Assert.NotNull(owner);
+            Assert.Equal(42, owner!.UserId);
+            // Normalized on the way in, once, so no comparison has to remember to do it.
+            Assert.Equal("owner@example.com", owner.Email);
+            Assert.True(owner.HasIdentity);
+
+            // One row, still - a fixed primary key is what stops a claim accumulating rows and
+            // leaving a reader to pick between them.
+            Assert.Single(await _service.Connection.Table<DatabaseOwner>().ToListAsync());
+        }
+
+        [Theory]
+        [InlineData(42, "owner@example.com", DatabaseOwnershipVerdict.SameAccount)]
+        [InlineData(42, "OWNER@EXAMPLE.COM", DatabaseOwnershipVerdict.SameAccount)]
+        [InlineData(99, "owner@example.com", DatabaseOwnershipVerdict.DifferentAccount)]
+        [InlineData(42, "someone.else@example.com", DatabaseOwnershipVerdict.DifferentAccount)]
+        public async Task EvaluateOwnershipAsync_ComparesBothTheUserIdAndTheEmail(
+            int userId, string email, DatabaseOwnershipVerdict expected)
+        {
+            // Both halves, because either alone is weaker than it looks: an email can be
+            // reassigned to a new user on a rebuilt server, and a UserId is a small integer two
+            // unrelated servers will both hand out.
+            await _service.ClaimDatabaseAsync(42, "owner@example.com", "https://api.example.com");
+
+            Assert.Equal(expected, await _service.EvaluateOwnershipAsync(userId, email, "https://api.example.com"));
+        }
+
+        [Fact]
+        public async Task EvaluateOwnershipAsync_AMovedEndpoint_IsAllowedRatherThanRefused()
+        {
+            // A server that moved from a LAN address to a domain name is ordinary and legitimate.
+            // The endpoint is recorded and a change warned about, deliberately not blocked on.
+            await _service.ClaimDatabaseAsync(42, "owner@example.com", "http://192.168.1.10:8080");
+
+            Assert.Equal(
+                DatabaseOwnershipVerdict.EndpointChanged,
+                await _service.EvaluateOwnershipAsync(42, "owner@example.com", "https://workledger.example.com"));
+        }
+
+        [Fact]
+        public async Task BackfillDatabaseOwnerAsync_OnANeverSyncedDatabase_WritesNothing()
+        {
+            await _service.BackfillDatabaseOwnerAsync(hasSyncedBefore: false);
+
+            // Unclaimed is already the right answer for a database that has never met a server.
+            Assert.Null(await _service.GetDatabaseOwnerAsync());
+        }
+
+        [Fact]
+        public async Task BackfillDatabaseOwnerAsync_OnAPreS6SyncedDatabase_StampsItClaimedByUnknown()
+        {
+            await _service.BackfillDatabaseOwnerAsync(hasSyncedBefore: true);
+
+            // Asserted through raw SQL rather than the ORM, per InitializeAsync's documented
+            // caveat: sqlite-net leaves a mapped property at its C# initializer value when the
+            // column is SQL NULL, so "UserId is null" read through the ORM proves nothing about
+            // what is actually stored.
+            var nullIdentities = await _service.Connection.ExecuteScalarAsync<int>(
+                "SELECT COUNT(*) FROM DatabaseOwner WHERE UserId IS NULL AND Email IS NULL");
+            Assert.Equal(1, nullIdentities);
+
+            var owner = await _service.GetDatabaseOwnerAsync();
+            Assert.NotNull(owner);
+            Assert.False(owner!.HasIdentity);
+
+            // Adoptable, not refused: the first post-upgrade sign-in claims it, which is exactly
+            // the shape of the server's own POST /auth/claim.
+            Assert.Equal(
+                DatabaseOwnershipVerdict.Unclaimed,
+                await _service.EvaluateOwnershipAsync(42, "owner@example.com", "https://api.example.com"));
+        }
+
+        [Fact]
+        public async Task BackfillDatabaseOwnerAsync_NeverOverwritesAnExistingStamp()
+        {
+            await _service.ClaimDatabaseAsync(42, "owner@example.com", "https://api.example.com");
+
+            await _service.BackfillDatabaseOwnerAsync(hasSyncedBefore: true);
+
+            var owner = await _service.GetDatabaseOwnerAsync();
+            Assert.Equal(42, owner!.UserId);
+        }
     }
 }

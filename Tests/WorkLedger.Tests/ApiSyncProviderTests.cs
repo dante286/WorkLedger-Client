@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -21,7 +22,8 @@ namespace WorkLedger.Tests
     {
         private const string BaseUrl = "https://workledger.example.com";
         private const string DeviceId = "device-under-test";
-        private const string BootstrapSecret = "operator-supplied-secret";
+        private const string Email = "person@example.com";
+        private const string Password = "correct horse battery staple";
 
         // Records what was sent and replays a queued script of responses, so a test can set
         // up a 401-then-200 sequence without a stub framework.
@@ -57,7 +59,6 @@ namespace WorkLedger.Tests
                     request.Method,
                     request.RequestUri!,
                     request.Headers.Authorization?.Parameter,
-                    request.Headers.TryGetValues("X-Bootstrap-Secret", out var secret) ? secret.FirstOrDefault() : null,
                     request.Content?.ReadAsStringAsync(cancellationToken).GetAwaiter().GetResult()));
 
                 var responder = _responders.Count > 0 ? _responders.Dequeue() : _fallback;
@@ -73,7 +74,45 @@ namespace WorkLedger.Tests
             };
         }
 
-        public record RecordedRequest(HttpMethod Method, Uri Uri, string? BearerToken, string? BootstrapSecret, string? Body);
+        public record RecordedRequest(HttpMethod Method, Uri Uri, string? BearerToken, string? Body);
+
+        // WL-134: counts how many times the credential was actually asked for, which is the
+        // observable form of "the credential was discarded" - a provider that kept retrying a
+        // rejected password would keep reading it.
+        private sealed class CountingCredentialSource
+        {
+            private readonly ApiCredentials? _credential;
+
+            public CountingCredentialSource(string? email = Email, string? password = Password)
+                => _credential = email is null || password is null ? null : new ApiCredentials(email, password);
+
+            public int ReadCount { get; private set; }
+
+            public ApiCredentials? Read()
+            {
+                ReadCount++;
+                return _credential;
+            }
+        }
+
+        private static object LoginResponseBody(string token, DateTime expiresAt, string email = Email, int userId = 7)
+            => new
+            {
+                Token = token,
+                ExpiresAtUtc = expiresAt,
+                User = new { Id = userId, Email = email, DisplayName = (string?)null, CreatedAtUtc = DateTime.UtcNow }
+            };
+
+        // A 423/429 as the server sends it: the status plus a Retry-After the client has to read.
+        private static HttpResponseMessage WithRetryAfter(HttpStatusCode status, int seconds)
+        {
+            var response = new HttpResponseMessage(status)
+            {
+                Content = new StringContent("{}", Encoding.UTF8, "application/json")
+            };
+            response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(seconds));
+            return response;
+        }
 
         private class FakeTokenStore : IApiTokenStore
         {
@@ -98,13 +137,15 @@ namespace WorkLedger.Tests
         private static ApiSyncProvider CreateProvider(
             RecordingHandler handler,
             IApiTokenStore? tokens = null,
-            string? bootstrapSecret = BootstrapSecret)
+            Func<ApiCredentials?>? credentials = null)
             => new(
                 new HttpClient(handler),
                 BaseUrl,
                 DeviceId,
                 tokens ?? new FakeTokenStore("existing-token", DateTime.UtcNow.AddDays(30)),
-                () => bootstrapSecret);
+                credentials ?? (() => null));
+
+
 
         private static SyncQueue QueueEntry(int id, string entityType, Guid entityId, string operation, int version)
             => new()
@@ -433,102 +474,277 @@ namespace WorkLedger.Tests
             Assert.Equal(4, change.Version);
         }
 
+        // ---------------------------------------------------------------- WL-134: signing in
+
         [Fact]
-        public async Task Bootstrap_StoresTheIssuedTokenAndExpiry()
+        public async Task Login_StoresTheIssuedTokenAndReturnsWhoSignedIn()
         {
             var expiresAt = DateTime.UtcNow.AddDays(365);
             var tokens = new FakeTokenStore();
             var handler = new RecordingHandler().EnqueueJson(
-                HttpStatusCode.OK, new { Token = "freshly-issued", ExpiresAtUtc = expiresAt });
-            var provider = CreateProvider(handler, tokens);
+                HttpStatusCode.OK, LoginResponseBody("freshly-issued", expiresAt));
+            var provider = CreateProvider(handler, tokens, () => new ApiCredentials(Email, Password));
 
-            var bootstrapped = await provider.TryBootstrapAsync();
+            var outcome = await provider.TryLoginAsync();
 
-            Assert.True(bootstrapped);
+            Assert.True(outcome.Success);
             Assert.Equal("freshly-issued", tokens.Token);
             Assert.Equal(expiresAt, tokens.ExpiresAtUtc);
 
+            // The UserSummary comes back on the login response, so a caller never needs a second
+            // /auth/whoami to say who signed in - and WL-138's guard needs the Id right here.
+            Assert.Equal(7, outcome.User!.Id);
+            Assert.Equal(Email, outcome.User.Email);
+            Assert.Equal(AuthState.SignedIn, provider.Auth.State);
+
             var request = Assert.Single(handler.Requests);
             Assert.Equal(HttpMethod.Post, request.Method);
-            Assert.Equal("https://workledger.example.com/auth/register-device", request.Uri.ToString());
-            Assert.Equal(BootstrapSecret, request.BootstrapSecret);
+            Assert.Equal("https://workledger.example.com/auth/login", request.Uri.ToString());
             // Anonymous endpoint - sending a bearer here would be meaningless.
             Assert.Null(request.BearerToken);
-            Assert.Contains(DeviceId, request.Body);
+        }
+
+        // The device identity on the wire is AppSettings.DeviceId, the same value stamped as
+        // OriginDeviceId. Sending the email instead would mint a second identifier and quietly
+        // detach this install's history from its own rows.
+        [Fact]
+        public async Task Login_SendsTheDeviceIdAsTheDeviceIdentity_NotTheEmail()
+        {
+            var handler = new RecordingHandler().EnqueueJson(
+                HttpStatusCode.OK, LoginResponseBody("issued", DateTime.UtcNow.AddDays(365)));
+            var provider = CreateProvider(handler, new FakeTokenStore(), () => new ApiCredentials(Email, Password));
+
+            await provider.TryLoginAsync();
+
+            var body = Assert.Single(handler.Requests).Body!;
+            Assert.Contains($"\"DeviceId\":\"{DeviceId}\"", body);
+            Assert.Contains($"\"Email\":\"{Email}\"", body);
         }
 
         [Fact]
-        public async Task Bootstrap_WithNoSecretConfigured_FailsQuietlyWithoutCallingTheServer()
+        public async Task Login_WithNoCredentialAvailable_FailsQuietlyWithoutCallingTheServer()
         {
             var handler = new RecordingHandler();
-            var provider = CreateProvider(handler, bootstrapSecret: null);
+            var provider = CreateProvider(handler, new FakeTokenStore());
 
-            Assert.False(await provider.TryBootstrapAsync());
+            Assert.False((await provider.TryLoginAsync()).Success);
             Assert.Empty(handler.Requests);
         }
 
-        // Re-registration is idempotent server-side, so recovering from a rejected token
-        // mid-sync is safe. Exactly one retry: a second 401 won't be fixed by a third try.
+        // ------------------------------------------------- WL-134 Invariant L, the headline test
+
+        // THE test of plan 8 item 4. Drive far more sync cycles than the server's five-failure
+        // lockout threshold against a server that refuses everything, and assert the client never
+        // makes a second login attempt. Every rule in item 4 exists to make this pass; if it ever
+        // fails, an unattended client can lock its own user out of their own server overnight.
         [Fact]
-        public async Task PullAsync_OnA401_ReBootstrapsOnceAndRetriesTheCall()
+        public async Task ManySyncCycles_AgainstAServerThat401sEverything_MakeAtMostOneLoginAttempt()
+        {
+            var credentials = new CountingCredentialSource();
+            var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.Unauthorized)
+            {
+                Content = new StringContent("{}", Encoding.UTF8, "application/json")
+            });
+            var provider = CreateProvider(
+                handler, new FakeTokenStore("doomed-token", DateTime.UtcNow.AddDays(30)), credentials.Read);
+
+            // A dozen cycles is well past five, and costs nothing against a fake handler.
+            for (var cycle = 0; cycle < 12; cycle++)
+            {
+                await provider.PushAsync(new[] { QueueEntry(cycle + 1, "project", Guid.NewGuid(), "create", 1) });
+                await provider.PullAsync(DateTime.MinValue);
+            }
+
+            var loginAttempts = handler.Requests.Count(request => request.Uri.AbsolutePath == "/auth/login");
+            Assert.Equal(1, loginAttempts);
+
+            // Whatever else is true at the end, the session is not usable - so the timer stops
+            // firing at it too (item 4d). The exact label is SessionRevoked rather than SignedOut:
+            // the rejected credential is discarded first, and then the next cycle re-observes the
+            // still-dead token. Both mean "a human has to sign in", which is the only distinction
+            // that changes what anything does.
+            Assert.False(provider.Auth.CanSync);
+            Assert.Equal(AuthState.SessionRevoked, provider.Auth.State);
+        }
+
+        // The same bound stated the other way round: once refused, the credential is not read
+        // again at all. This is the discard in item 4b, observed rather than inferred.
+        [Fact]
+        public async Task AfterALoginIsRejected_TheCredentialIsNeverConsultedAgain()
+        {
+            var credentials = new CountingCredentialSource();
+            var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.Unauthorized)
+            {
+                Content = new StringContent("{}", Encoding.UTF8, "application/json")
+            });
+            var provider = CreateProvider(
+                handler, new FakeTokenStore("doomed-token", DateTime.UtcNow.AddDays(30)), credentials.Read);
+
+            await provider.PullAsync(DateTime.MinValue);
+            var readsAfterFirstRun = credentials.ReadCount;
+
+            await provider.PullAsync(DateTime.MinValue);
+            await provider.PullAsync(DateTime.MinValue);
+
+            // It may still be *read* - CurrentCredential is what compares it - but it is never
+            // sent again, which is the property that matters.
+            Assert.Equal(1, handler.Requests.Count(request => request.Uri.AbsolutePath == "/auth/login"));
+            Assert.True(credentials.ReadCount >= readsAfterFirstRun);
+        }
+
+        // ------------------------------------------------------------- WL-134 item 4c, the rules
+
+        // The overwhelmingly common shape of a revoked session: nobody is signing in, so there is
+        // nothing to recover with. Exactly ONE request - the failing one. That count is the thing
+        // that must not grow.
+        [Fact]
+        public async Task PullAsync_OnA401WithNoCredentialHeld_MakesExactlyOneRequestAndReportsAuthentication()
+        {
+            var handler = new RecordingHandler().EnqueueRaw(HttpStatusCode.Unauthorized, "{}");
+            var provider = CreateProvider(handler, new FakeTokenStore("revoked-token", DateTime.UtcNow.AddDays(30)));
+
+            var result = await provider.PullAsync(DateTime.MinValue);
+
+            Assert.False(result.Succeeded);
+            Assert.True(result.AuthenticationRequired);
+            Assert.Single(handler.Requests);
+            Assert.Equal(AuthState.SessionRevoked, provider.Auth.State);
+        }
+
+        [Fact]
+        public async Task PushAsync_OnA401WithNoCredentialHeld_LeavesTheQueueRowsPending()
+        {
+            var handler = new RecordingHandler().EnqueueRaw(HttpStatusCode.Unauthorized, "{}");
+            var provider = CreateProvider(handler, new FakeTokenStore("revoked-token", DateTime.UtcNow.AddDays(30)));
+
+            var result = await provider.PushAsync(new[] { QueueEntry(60, "project", Guid.NewGuid(), "create", 1) });
+
+            Assert.True(result.AuthenticationRequired);
+            Assert.Empty(result.AcceptedSyncQueueIds);
+            // Pending, never retired: the server never saw these, and discarding work on the
+            // strength of a signed-out session would lose it for good.
+            Assert.Empty(result.RejectedSyncQueueIds);
+            Assert.Equal(60, Assert.Single(result.Failures).SyncQueueId);
+        }
+
+        // With a sign-in genuinely in flight, a 401 mid-call IS recoverable - once.
+        [Fact]
+        public async Task PullAsync_OnA401WithACredentialHeld_LogsInOnceAndRetriesTheCall()
         {
             var tokens = new FakeTokenStore("stale-token", DateTime.UtcNow.AddDays(30));
             var handler = new RecordingHandler()
                 .EnqueueRaw(HttpStatusCode.Unauthorized, "{}")
-                .EnqueueJson(HttpStatusCode.OK, new { Token = "renewed-token", ExpiresAtUtc = DateTime.UtcNow.AddDays(365) })
+                .EnqueueJson(HttpStatusCode.OK, LoginResponseBody("renewed-token", DateTime.UtcNow.AddDays(365)))
                 .EnqueueJson(HttpStatusCode.OK, new { Changes = Array.Empty<object>(), ServerTime = DateTime.UtcNow });
-            var provider = CreateProvider(handler, tokens);
+            var provider = CreateProvider(handler, tokens, () => new ApiCredentials(Email, Password));
 
             var result = await provider.PullAsync(DateTime.MinValue);
 
             Assert.True(result.Succeeded);
             Assert.Equal(3, handler.Requests.Count);
             Assert.Equal("stale-token", handler.Requests[0].BearerToken);
-            Assert.Equal("/auth/register-device", handler.Requests[1].Uri.AbsolutePath);
+            Assert.Equal("/auth/login", handler.Requests[1].Uri.AbsolutePath);
             Assert.Equal("renewed-token", handler.Requests[2].BearerToken);
             Assert.Equal(1, tokens.SaveCount);
         }
 
         [Fact]
-        public async Task PullAsync_WhenTheSecond401CannotBeRecovered_FailsCleanly()
+        public async Task PullAsync_WhenTheRetryAfterAFreshLoginAlso401s_FailsWithoutTryingAgain()
         {
             var tokens = new FakeTokenStore("stale-token", DateTime.UtcNow.AddDays(30));
             var handler = new RecordingHandler()
                 .EnqueueRaw(HttpStatusCode.Unauthorized, "{}")
-                .EnqueueJson(HttpStatusCode.OK, new { Token = "renewed-token", ExpiresAtUtc = DateTime.UtcNow.AddDays(365) })
+                .EnqueueJson(HttpStatusCode.OK, LoginResponseBody("renewed-token", DateTime.UtcNow.AddDays(365)))
                 .EnqueueRaw(HttpStatusCode.Unauthorized, "{}");
-            var provider = CreateProvider(handler, tokens);
+            var provider = CreateProvider(handler, tokens, () => new ApiCredentials(Email, Password));
 
             var result = await provider.PullAsync(DateTime.MinValue);
 
             Assert.False(result.Succeeded);
-            Assert.Contains("401", result.ErrorMessage);
-            // Three calls, not four - the retry is not itself retried.
+            Assert.True(result.AuthenticationRequired);
+            // Three calls, not four - the retry is not itself retried, and in particular it is
+            // not answered with a second login.
             Assert.Equal(3, handler.Requests.Count);
+            Assert.Equal(AuthState.SessionRevoked, provider.Auth.State);
         }
 
-        // A token that is about to lapse is renewed before the call rather than after being
-        // told no, so a long sync doesn't die halfway through.
         [Fact]
-        public async Task PullAsync_WithAnAlmostExpiredToken_RenewsBeforeCalling()
+        public async Task Login_OnA423_ReportsLockedOutWithTheRetryAfterInstant()
         {
-            var tokens = new FakeTokenStore("about-to-lapse", DateTime.UtcNow.AddMinutes(1));
-            var handler = new RecordingHandler()
-                .EnqueueJson(HttpStatusCode.OK, new { Token = "renewed-token", ExpiresAtUtc = DateTime.UtcNow.AddDays(365) })
-                .EnqueueJson(HttpStatusCode.OK, new { Changes = Array.Empty<object>(), ServerTime = DateTime.UtcNow });
-            var provider = CreateProvider(handler, tokens);
+            var handler = new RecordingHandler().Enqueue(_ => WithRetryAfter(HttpStatusCode.Locked, 900));
+            var provider = CreateProvider(handler, new FakeTokenStore(), () => new ApiCredentials(Email, Password));
 
-            Assert.True((await provider.PullAsync(DateTime.MinValue)).Succeeded);
+            var outcome = await provider.TryLoginAsync();
 
-            Assert.Equal("/auth/register-device", handler.Requests[0].Uri.AbsolutePath);
-            Assert.Equal("renewed-token", handler.Requests[1].BearerToken);
+            Assert.False(outcome.Success);
+            Assert.Equal(AuthState.LockedOut, provider.Auth.State);
+            Assert.NotNull(provider.Auth.RetryAfterUtc);
+            Assert.InRange(provider.Auth.RetryAfterUtc!.Value, DateTime.UtcNow.AddMinutes(14), DateTime.UtcNow.AddMinutes(16));
+            Assert.Contains("15 minutes", outcome.ErrorMessage);
+        }
+
+        // A locked account refuses the CORRECT password too, so a 423 says nothing about whether
+        // this credential is right - and another attempt could only make the wait longer.
+        [Fact]
+        public async Task AfterA423_NoFurtherLoginIsAttempted()
+        {
+            var handler = new RecordingHandler(_ => WithRetryAfter(HttpStatusCode.Locked, 900));
+            var provider = CreateProvider(
+                handler, new FakeTokenStore("stale", DateTime.UtcNow.AddDays(30)), () => new ApiCredentials(Email, Password));
+
+            await provider.TryLoginAsync();
+            await provider.PullAsync(DateTime.MinValue);
+            await provider.PullAsync(DateTime.MinValue);
+
+            Assert.Equal(1, handler.Requests.Count(request => request.Uri.AbsolutePath == "/auth/login"));
         }
 
         [Fact]
-        public async Task PushAsync_WithNoTokenAndNoBootstrapSecret_FailsWithoutThrowing()
+        public async Task Login_OnA429_ReportsRateLimitedRatherThanALockout()
+        {
+            var handler = new RecordingHandler().Enqueue(_ => WithRetryAfter(HttpStatusCode.TooManyRequests, 60));
+            var provider = CreateProvider(handler, new FakeTokenStore(), () => new ApiCredentials(Email, Password));
+
+            var outcome = await provider.TryLoginAsync();
+
+            Assert.False(outcome.Success);
+            // Deliberately a different state from LockedOut: nobody's account is in trouble, the
+            // caller is just early, and saying "your account is locked" would be a lie.
+            Assert.Equal(AuthState.RateLimited, provider.Auth.State);
+            Assert.NotNull(provider.Auth.RetryAfterUtc);
+        }
+
+        // ---------------------------------------------------------- WL-134 item 4a, free states
+
+        // Reached with NO request at all. A year-idle install should prompt for a sign-in, not
+        // spend a doomed round trip discovering what its own settings already say.
+        [Fact]
+        public async Task AnExpiredToken_ReadsAsSessionExpired_WithoutMakingAnyRequest()
         {
             var handler = new RecordingHandler();
-            var provider = CreateProvider(handler, new FakeTokenStore(), bootstrapSecret: null);
+            var provider = CreateProvider(handler, new FakeTokenStore("long-dead", DateTime.UtcNow.AddDays(-1)));
+
+            Assert.Equal(AuthState.SessionExpired, provider.Auth.State);
+            Assert.False(provider.Auth.CanSync);
+            Assert.Empty(handler.Requests);
+
+            await Task.CompletedTask;
+        }
+
+        [Fact]
+        public void NoToken_ReadsAsSignedOut()
+        {
+            var provider = CreateProvider(new RecordingHandler(), new FakeTokenStore());
+
+            Assert.Equal(AuthState.SignedOut, provider.Auth.State);
+            Assert.False(provider.Auth.CanSync);
+        }
+
+        [Fact]
+        public async Task PushAsync_WithNoTokenAndNoCredential_FailsWithoutThrowing()
+        {
+            var handler = new RecordingHandler();
+            var provider = CreateProvider(handler, new FakeTokenStore());
 
             var result = await provider.PushAsync(new[] { QueueEntry(60, "project", Guid.NewGuid(), "create", 1) });
 
@@ -536,6 +752,7 @@ namespace WorkLedger.Tests
             Assert.Empty(result.AcceptedSyncQueueIds);
             // Retryable, not retired: the server never saw this change.
             Assert.Empty(result.RejectedSyncQueueIds);
+            Assert.True(result.AuthenticationRequired);
             Assert.Equal(60, Assert.Single(result.Failures).SyncQueueId);
         }
 
