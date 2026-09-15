@@ -883,6 +883,64 @@
                             </ItemsControl>
                         </StackPanel>
 
+                        <!-- WL-142: the two account actions that are not about this device alone.
+                             Signed-in only. -->
+                        <StackPanel Spacing="{DynamicResource SpacingMedium}" IsVisible="{Binding !IsSignedOutOfApi}">
+                            <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                                <Button Command="{Binding ToggleChangePasswordCommand}"
+                                        Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
+                                        FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
+                                        VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
+                                    <TextBlock Text="Change password" />
+                                </Button>
+                                <!-- Distinct from the local Sign out above it: that one drops this
+                                     app's token and tells the server nothing, this one kills every
+                                     token the account has. Both leave local data alone. -->
+                                <Button Command="{Binding SignOutEverywhereCommand}"
+                                        Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
+                                        FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
+                                        VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
+                                    <TextBlock Text="Sign out everywhere" />
+                                </Button>
+                            </StackPanel>
+
+                            <Border IsVisible="{Binding IsChangePasswordOpen}"
+                                    Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Border}"
+                                    BorderThickness="1" CornerRadius="8" Padding="12" HorizontalAlignment="Left">
+                                <StackPanel Spacing="{DynamicResource SpacingMedium}">
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                                        <TextBlock VerticalAlignment="Center" Width="140" Foreground="{DynamicResource TextSecondary}">Current password</TextBlock>
+                                        <TextBox Width="240" PasswordChar="&#x2022;" Text="{Binding CurrentPassword, Mode=TwoWay}" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                                        <TextBlock VerticalAlignment="Center" Width="140" Foreground="{DynamicResource TextSecondary}">New password</TextBlock>
+                                        <TextBox Width="240" PasswordChar="&#x2022;" Text="{Binding NewPassword, Mode=TwoWay}" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                                        <TextBlock VerticalAlignment="Center" Width="140" Foreground="{DynamicResource TextSecondary}">Confirm new password</TextBlock>
+                                        <TextBox Width="240" PasswordChar="&#x2022;" Text="{Binding ConfirmNewPassword, Mode=TwoWay}" />
+                                    </StackPanel>
+                                    <TextBlock TextWrapping="Wrap" MaxWidth="400" FontSize="12"
+                                               Foreground="{DynamicResource TextSecondary}"
+                                               Text="Changing your password signs your other devices out. This one stays signed in." />
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                                        <Button Command="{Binding SubmitPasswordChangeCommand}"
+                                                Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
+                                                FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
+                                                BorderThickness="1" BorderBrush="{DynamicResource Border}">
+                                            <TextBlock Text="Change password" />
+                                        </Button>
+                                        <Button Command="{Binding ToggleChangePasswordCommand}"
+                                                Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
+                                                FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
+                                                BorderThickness="1" BorderBrush="{DynamicResource Border}">
+                                            <TextBlock Text="Cancel" />
+                                        </Button>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
                         <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
                             <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Status</TextBlock>
                             <TextBlock VerticalAlignment="Center" Text="{Binding ApiTokenStatus}" FontSize="12"

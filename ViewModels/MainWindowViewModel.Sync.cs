@@ -165,6 +165,21 @@ namespace WorkLedger_Client.ViewModels
         [ObservableProperty]
         private bool _isLoadingDevices;
 
+        // WL-142. The change-password form, collapsed until asked for. Three bound fields, none of
+        // them persisted and all three cleared the instant the call returns - the same discipline
+        // the sign-in password is held to, for the same reason.
+        [ObservableProperty]
+        private bool _isChangePasswordOpen;
+
+        [ObservableProperty]
+        private string _currentPassword = string.Empty;
+
+        [ObservableProperty]
+        private string _newPassword = string.Empty;
+
+        [ObservableProperty]
+        private string _confirmNewPassword = string.Empty;
+
         public bool IsFileSyncSelected => SyncMode == SyncMode.File;
 
         public bool IsApiSyncSelected => SyncMode == SyncMode.Api;
@@ -414,6 +429,91 @@ namespace WorkLedger_Client.ViewModels
         }
 
         [RelayCommand]
+        private void ToggleChangePassword()
+        {
+            IsChangePasswordOpen = !IsChangePasswordOpen;
+            ClearPasswordForm();
+        }
+
+        /// <summary>
+        /// Changes the account password. WL-142.
+        /// </summary>
+        /// <remarks>
+        /// Validated against the server's own <c>MinPasswordLength</c> from the cached capabilities
+        /// and nothing else - the server deliberately has no composition rules (NIST 800-63B:
+        /// length is the control that matters), and a client demanding a symbol would refuse a
+        /// password the server would have taken.
+        /// <para>
+        /// A wrong current password comes back as a message and leaves the session alone. It is
+        /// emphatically <b>not</b> the revoked-session path: see <c>credentialGuarded</c> in
+        /// <c>ApiSyncProvider</c>, which is what keeps the two 401s apart.
+        /// </para>
+        /// </remarks>
+        [RelayCommand]
+        private async Task SubmitPasswordChangeAsync()
+        {
+            var invalid = AuthPanelState.ValidateNewPassword(
+                NewPassword, ConfirmNewPassword, _capabilities?.MinPasswordLength ?? 0);
+
+            if (invalid != null)
+            {
+                _toastService?.ShowToast(invalid, 4000);
+                return;
+            }
+
+            var current = CurrentPassword;
+            var next = NewPassword;
+
+            // Out of the bound fields before the await: they are attached to controls the user can
+            // still see, and no outcome makes leaving them there the right answer.
+            ClearPasswordForm();
+
+            var (success, message) = await _syncCoordinator.ChangePasswordAsync(current, next);
+            if (success)
+                IsChangePasswordOpen = false;
+
+            await RefreshAuthPanelAsync();
+            _toastService?.ShowToast(message, success ? 5000 : 4500);
+        }
+
+        /// <summary>
+        /// Signs every device out, keeping this one signed in. WL-142.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately worded to contrast with the local <c>Sign out</c> beside it - that one drops
+        /// this app's token and tells the server nothing; this one kills every token the account
+        /// has and takes a replacement for this device. Both leave local data alone, and both say
+        /// so, because "sign out" is the phrase people most often read as "and delete my stuff".
+        /// </remarks>
+        [RelayCommand]
+        private async Task SignOutEverywhereAsync()
+        {
+            var confirmed = await ConfirmAsync(
+                "Sign out everywhere",
+                "Sign out every device on this account?\n\n"
+                + "Every other device will need to sign in again with your password. This one stays "
+                + "signed in - the server issues it a fresh token as part of the same request.\n\n"
+                + "Nothing is deleted anywhere: your projects, tasks and time entries stay on the "
+                + "account and on every device that holds them.",
+                "Sign out everywhere");
+
+            if (!confirmed)
+                return;
+
+            var (success, message) = await _syncCoordinator.SignOutEverywhereAsync();
+
+            await RefreshAuthPanelAsync();
+            _toastService?.ShowToast(message, success ? 5000 : 4500);
+        }
+
+        private void ClearPasswordForm()
+        {
+            CurrentPassword = string.Empty;
+            NewPassword = string.Empty;
+            ConfirmNewPassword = string.Empty;
+        }
+
+        [RelayCommand]
         private Task RefreshCapabilitiesAsync() => RefreshAuthPanelAsync(refreshCapabilities: true);
 
         [RelayCommand]
@@ -425,6 +525,12 @@ namespace WorkLedger_Client.ViewModels
             // token stops being used here but is not revoked server-side. That is logout-all, and
             // it is plan 10.
             _syncCoordinator.SignOut();
+
+            // Nothing in the signed-in half of the panel applies any more, and a half-typed
+            // password left in a collapsed form is the kind of thing that surprises someone later.
+            IsChangePasswordOpen = false;
+            ClearPasswordForm();
+
             await RefreshAuthPanelAsync();
 
             _toastService?.ShowToast(
