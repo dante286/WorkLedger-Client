@@ -265,6 +265,249 @@ namespace WorkLedger_Client.Services
             }
         }
 
+        // ---------------------------------------------------------------- WL-139/140: account management
+        //
+        // These are account operations rather than sync operations, and they live here anyway.
+        // This class already owns the HttpClient, the token store and the one ApiSyncProvider, and
+        // it is "all MainWindowViewModel sees of the sync stack"; a second HTTP-owning service for
+        // five calls would duplicate all three and give the view model two things to hold.
+        //
+        // Every one of them keeps the never-throws contract: an unreachable server, a
+        // misconfiguration or a refusal comes back as a result, never as an exception.
+
+        /// <summary>
+        /// The devices signed in to this account. WL-141.
+        /// </summary>
+        /// <remarks>
+        /// Order is the server's and is preserved all the way to the list on screen.
+        /// </remarks>
+        public async Task<DeviceListOutcome> GetDevicesAsync()
+        {
+            var provider = EnsureApiProvider();
+            if (provider is null)
+                return DeviceListOutcome.Failed("Enter an API endpoint first.");
+
+            try
+            {
+                return await provider.GetDevicesAsync();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Device list failed: {ex.Message}");
+                return DeviceListOutcome.Failed($"Couldn't load this account's devices: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Detaches one device from the account. WL-141.
+        /// </summary>
+        /// <remarks>
+        /// Removing a device revokes its token and nothing else - its projects, tasks and entries
+        /// stay on the account, and it re-enrols by signing in again.
+        /// <para>
+        /// <b>Removing THIS device is allowed</b>, and the token this app is holding is dead the
+        /// instant the server answers. The session is therefore stood down here rather than left
+        /// to be discovered as a 401 on the next tick: the app would otherwise keep a token it
+        /// already knows is worthless, and report a revoked session for something the user just
+        /// asked for. Local data is untouched, exactly as an ordinary sign-out leaves it.
+        /// </para>
+        /// </remarks>
+        public async Task<(bool Success, string Message)> RemoveDeviceAsync(string deviceId)
+        {
+            var provider = EnsureApiProvider();
+            if (provider is null)
+                return (false, "Enter an API endpoint first.");
+
+            try
+            {
+                var outcome = await provider.DeleteDeviceAsync(deviceId);
+                if (!outcome.Success)
+                    return (false, outcome.ErrorMessage ?? "Couldn't remove that device.");
+
+                var removedThisDevice = string.Equals(
+                    deviceId, _settings.DeviceId, StringComparison.OrdinalIgnoreCase);
+
+                if (!removedThisDevice)
+                    return (true, "Device removed. Its recorded work stays on the account.");
+
+                SignOut();
+                return (true,
+                    "This device was removed, so it's been signed out here. Your projects, tasks and "
+                    + "entries stay on this machine and on the account - sign in again to reconnect it.");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Device removal failed: {ex.Message}");
+                return (false, $"Couldn't remove that device: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Signs every device out, keeping this one signed in. WL-142.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately distinct from <see cref="SignOut"/>: that one drops this app's token and
+        /// tells the server nothing, this one kills every token the account has and hands back a
+        /// replacement for this device. Both leave local data completely alone.
+        /// </remarks>
+        public async Task<(bool Success, string Message)> SignOutEverywhereAsync()
+        {
+            var provider = EnsureApiProvider();
+            if (provider is null)
+                return (false, "Enter an API endpoint first.");
+
+            try
+            {
+                var outcome = await provider.LogoutAllAsync();
+
+                // The provider has already stored the fresh token, so this device is still signed
+                // in - which is the whole point, and why nothing is cleared here.
+                return outcome.Success
+                    ? (true, "Every other device has been signed out. This one is still signed in, "
+                             + "and no work was deleted anywhere.")
+                    : (false, outcome.ErrorMessage ?? "Couldn't sign the other devices out.");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Sign out everywhere failed: {ex.Message}");
+                return (false, $"Couldn't sign the other devices out: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Changes the account password. WL-142.
+        /// </summary>
+        /// <remarks>
+        /// A wrong current password is reported as such and <b>does not</b> sign this app out - see
+        /// <c>credentialGuarded</c> in <c>ApiSyncProvider</c> for how that 401 is told apart from a
+        /// revoked session. On success every other device is signed out, because the server rotates
+        /// the security stamp, and saying so is the difference between a feature and a mystery.
+        /// </remarks>
+        public async Task<(bool Success, string Message)> ChangePasswordAsync(
+            string currentPassword, string newPassword)
+        {
+            var provider = EnsureApiProvider();
+            if (provider is null)
+                return (false, "Enter an API endpoint first.");
+
+            if (string.IsNullOrEmpty(currentPassword))
+                return (false, "Enter your current password.");
+
+            if (string.IsNullOrEmpty(newPassword))
+                return (false, "Enter a new password.");
+
+            try
+            {
+                var outcome = await provider.ChangePasswordAsync(currentPassword, newPassword);
+
+                return outcome.Success
+                    ? (true, "Password changed. Your other devices have been signed out and will "
+                             + "need the new password.")
+                    : (false, outcome.ErrorMessage ?? "Couldn't change the password.");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Password change failed: {ex.Message}");
+                return (false, $"Couldn't change the password: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Deletes the account on the server. WL-143. <b>Immediate, total and irreversible.</b>
+        /// </summary>
+        /// <remarks>
+        /// What this does <i>not</i> do is the important half: <b>nothing local is deleted</b>. The
+        /// SQLite database, every project, task and time entry in it, and every pending
+        /// <c>SyncQueue</c> row are all left exactly as they were. That is the promise the
+        /// confirmation dialog makes, and it is asserted by a test that counts rows.
+        /// <para>
+        /// The queue keeping its unsent rows is a decision, not an oversight. They can never reach
+        /// the deleted account, but <c>PruneSyncedQueueAsync</c> only removes <c>IsSynced</c> ones
+        /// and with sync switched off nothing tries to send them - so they cost nothing, and they
+        /// are exactly what a later sign-in to a different account would want pushed.
+        /// </para>
+        /// <para>
+        /// The email is mirrored against the signed-in address <b>before</b> anything is sent. The
+        /// server checks it too and answers a mismatch with a 400, but only after it has checked
+        /// the password - so letting a typo through would spend one of the five attempts standing
+        /// between this user and a lockout, for a mistake this client can see.
+        /// </para>
+        /// <para>
+        /// On any failure nothing local changes at all. The server guarantees a failed guard leaves
+        /// the account fully intact, so pre-emptively clearing a session that still works would
+        /// invent the very problem the guard prevented.
+        /// </para>
+        /// </remarks>
+        public async Task<(bool Success, string Message)> DeleteAccountAsync(string password, string confirmEmail)
+        {
+            var provider = EnsureApiProvider();
+            if (provider is null)
+                return (false, "Enter an API endpoint first.");
+
+            if (string.IsNullOrEmpty(password))
+                return (false, "Enter your password to confirm.");
+
+            // The local half of the typed-confirmation gate. Normalized the same way the ownership
+            // stamp normalizes, so trailing whitespace and case differences are not a "mismatch".
+            var typed = DatabaseOwner.NormalizeEmail(confirmEmail);
+            var signedInAs = DatabaseOwner.NormalizeEmail(_settings.ApiEmail);
+
+            if (string.IsNullOrEmpty(typed) || !string.Equals(typed, signedInAs, StringComparison.Ordinal))
+            {
+                return (false,
+                    $"Type {_settings.ApiEmail} exactly to confirm. Nothing has been sent to the server.");
+            }
+
+            try
+            {
+                var outcome = await provider.DeleteAccountAsync(password, confirmEmail.Trim());
+                if (!outcome.Success)
+                    return (false, outcome.ErrorMessage ?? "Couldn't delete the account.");
+
+                await StandDownAfterAccountDeletionAsync();
+
+                return (true,
+                    "The account and everything the server held for it have been deleted. Your "
+                    + "projects, tasks and entries are still here on this device, and sync has been "
+                    + "turned off. Use Export CSV on the Reports tab to keep a copy elsewhere.");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Account deletion failed: {ex.Message}");
+                return (false, $"Couldn't delete the account: {ex.Message}");
+            }
+        }
+
+        // The client-side aftermath of a deletion the server has already carried out.
+        //
+        // Every one of these is about the SESSION. Switching the mode off is the load-bearing part:
+        // the account is gone, so every request from here on is a permanent 401, and a 15-minute
+        // timer grinding against it forever - producing a "you have been signed out" the user can
+        // do nothing about - is the failure mode this exists to prevent. The endpoint is left in
+        // settings on purpose, because it is still the right server to point a new account at.
+        private async Task StandDownAfterAccountDeletionAsync()
+        {
+            DiscardSession();
+
+            _settings.ApiEmail = string.Empty;
+            _settings.SyncMode = SyncMode.Off;
+
+            // Account-scoped state in a global field, the same reason adopting a database nulls it:
+            // a cursor from the deleted account means nothing to whatever is signed into next.
+            _settings.LastSyncedAtUtc = null;
+            _settingsService.SaveSettings(_settings);
+
+            // WL-138's stamp named an account that no longer exists, so it can no longer protect
+            // anything - all it could still do is refuse this database to its own owner. Dropping
+            // the identity (and nothing else) leaves it adoptable, which is where an unsynced
+            // install starts anyway. See LocalDbService.ReleaseDatabaseOwnerAsync.
+            await _db.ReleaseDatabaseOwnerAsync();
+
+            // Stops the timer for real rather than at the next settings save.
+            _builtForConfiguration = string.Empty;
+            ApplyConfiguration();
+        }
+
         /// <summary>
         /// Rebuilds the provider/orchestrator if the sync settings changed and starts, stops,
         /// or re-times the background tick to match. Safe to call on every settings save.
