@@ -80,6 +80,12 @@ namespace WorkLedger_Client.Sync
     // assumption that it has attempts to spare.
     public class ApiSyncProvider : IAuthenticatingSyncProvider
     {
+        // WL-146: the ONE place the bootstrap secret survives plan 8. It is no longer a
+        // token-issuing credential - on the server it gates only POST /auth/register and
+        // POST /auth/claim, i.e. who may create an account - so it belongs to a registration form
+        // for the duration of one call and nowhere near the sync configuration.
+        private const string BootstrapSecretHeader = "X-Bootstrap-Secret";
+
         private readonly HttpClient _http;
         private readonly Uri _baseUri;
         private readonly string _deviceId;
@@ -95,6 +101,17 @@ namespace WorkLedger_Client.Sync
         // authenticated request and zero login attempts, and a "revocation" that was really a
         // server restart heals itself instead of leaving a banner the user has to dismiss.
         private AuthStatus? _verdict;
+
+        // WL-146: what GET /auth/capabilities said, cached for the life of this provider - which is
+        // per-endpoint, since SyncCoordinator rebuilds the provider when the endpoint changes. The
+        // answer is server configuration and does not move under a running server, so re-asking on
+        // every panel open would be a request per glance.
+        //
+        // _capabilitiesProbed is deliberately NOT set after a transport failure: an unreachable
+        // server has not answered, and caching "no capabilities" for the app run would leave the
+        // registration UI hidden until restart for what may have been a five-second outage.
+        private AuthCapabilitiesResponse? _capabilities;
+        private bool _capabilitiesProbed;
 
         // INVARIANT L, enforced. The credential a login has already been refused for.
         //
@@ -364,6 +381,146 @@ namespace WorkLedger_Client.Sync
             return Auth.State is AuthState.LockedOut or AuthState.RateLimited ? null : credential;
         }
 
+        /// <summary>
+        /// What this server allows, so the UI can render the truth instead of guessing. WL-146.
+        /// </summary>
+        /// <remarks>
+        /// Sent <b>anonymously</b>. The endpoint takes no bearer and a stale token must not be able
+        /// to turn feature discovery into a 401 - being signed out is precisely when a client most
+        /// needs to know whether it may offer to create an account.
+        /// <para>
+        /// Total, and null-on-anything-unhelpful by design. A <c>404</c> means a server predating
+        /// the user-accounts work, which is a supported thing to point at rather than an error: the
+        /// caller degrades to a sign-in-only UI. That is the same forward-compatibility stance the
+        /// sync side takes for a missing <c>AuthoritativeOperation</c>.
+        /// </para>
+        /// </remarks>
+        public async Task<AuthCapabilitiesResponse?> TryGetCapabilitiesAsync(bool refresh = false)
+        {
+            if (_capabilitiesProbed && !refresh)
+                return _capabilities;
+
+            try
+            {
+                _capabilities = await SendOnceForJsonAsync<AuthCapabilitiesResponse>(
+                    () => new HttpRequestMessage(HttpMethod.Get, new Uri(_baseUri, "auth/capabilities")));
+            }
+            catch (SyncProviderException ex)
+            {
+                Debug.WriteLine($"ApiSyncProvider capabilities probe failed: {ex.Message}");
+                _capabilities = null;
+
+                // No status code means nothing answered - a dead host, DNS, a timeout. That is not
+                // a statement about the server's features, so don't remember it as one.
+                if (ex.StatusCode is null)
+                    return null;
+            }
+
+            _capabilitiesProbed = true;
+            return _capabilities;
+        }
+
+        /// <summary>
+        /// Creates an account. WL-146. Returns no token - see <see cref="AccountOutcome"/>.
+        /// </summary>
+        public Task<AccountOutcome> TryRegisterAsync(
+            string email, string password, string? displayName, string? bootstrapSecret)
+            => CreateAccountAsync("auth/register", email, password, displayName, bootstrapSecret, claiming: false);
+
+        /// <summary>
+        /// Takes ownership of a server's pre-existing, unclaimed account. WL-146.
+        /// </summary>
+        /// <remarks>
+        /// A deployment that predates user accounts migrates in place: its one seeded tenant keeps
+        /// every project, task, entry and device and gains a null password hash marking it
+        /// unclaimed. This attaches an email and password to <i>that row</i>, so the data already on
+        /// the server carries over. It cannot be signed into first - login refuses a null hash - and
+        /// once claimed the endpoint answers 409 forever, so this is a one-shot.
+        /// <para>
+        /// Deliberately <b>not</b> gated on <c>RegistrationEnabled</c>, on the server or here: an
+        /// operator who closed signups must still be able to claim their own data.
+        /// </para>
+        /// </remarks>
+        public Task<AccountOutcome> TryClaimAsync(
+            string email, string password, string? displayName, string? bootstrapSecret)
+            => CreateAccountAsync("auth/claim", email, password, displayName, bootstrapSecret, claiming: true);
+
+        // Register and claim take the same three inputs and the same secret header; only the path
+        // and two of the failure messages differ.
+        private async Task<AccountOutcome> CreateAccountAsync(
+            string path, string email, string password, string? displayName, string? bootstrapSecret, bool claiming)
+        {
+            try
+            {
+                var user = await SendOnceForJsonAsync<UserSummary>(() =>
+                {
+                    var request = BuildJsonRequest(
+                        HttpMethod.Post, path, new RegisterUserRequest(email, password, displayName));
+
+                    if (!string.IsNullOrWhiteSpace(bootstrapSecret))
+                        request.Headers.TryAddWithoutValidation(BootstrapSecretHeader, bootstrapSecret);
+
+                    return request;
+                });
+
+                return new AccountOutcome(true, user, null);
+            }
+            catch (SyncProviderException ex)
+            {
+                Debug.WriteLine($"ApiSyncProvider {path} failed: {ex.Message}");
+
+                // A 403 (registration switched off) or a 409 (email taken / nothing left to claim)
+                // both mean the cached capabilities are describing a server that has moved on since
+                // the probe, so the caller re-asks rather than leaving a form on screen that can
+                // only fail the same way again.
+                var stale = ex.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.Conflict;
+                return new AccountOutcome(false, null, DescribeAccountFailure(ex, claiming), stale);
+            }
+        }
+
+        private static string DescribeAccountFailure(SyncProviderException ex, bool claiming) => ex.StatusCode switch
+        {
+            HttpStatusCode.Forbidden => "This server has account registration turned off.",
+
+            HttpStatusCode.Unauthorized => "That signup secret wasn't accepted.",
+
+            // The one case where the server's own words are better than ours: it knows why the
+            // password or email was refused, and this client deliberately does not duplicate the
+            // rule it would be restating.
+            HttpStatusCode.BadRequest => ExtractServerError(ex) ?? "The server rejected those details.",
+
+            HttpStatusCode.Conflict => claiming
+                ? "There is nothing left to claim - this server's data already has an owner."
+                : "An account with that email already exists.",
+
+            // Worded about the ADDRESS, not about registration: the limiter is per-IP and shared
+            // with /auth/login, so this may well have been earned by sign-in attempts - possibly
+            // from a different device behind the same address.
+            HttpStatusCode.TooManyRequests =>
+                "Too many sign-in or signup attempts from this address. Try again shortly.",
+
+            _ => ex.Message
+        };
+
+        // The server's error shape is {"error":"..."} (see its AuthEndpoints.Error). Best-effort:
+        // anything unexpected falls back to the caller's generic wording rather than showing the
+        // raw body.
+        private static string? ExtractServerError(SyncProviderException ex)
+        {
+            if (string.IsNullOrWhiteSpace(ex.ResponseBody))
+                return null;
+
+            try
+            {
+                using var document = JsonDocument.Parse(ex.ResponseBody);
+                return document.RootElement.TryGetProperty("error", out var error) ? error.GetString() : null;
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
         private static SyncChangeDto ToChangeDto(SyncQueue queueEntry)
         {
             // SyncQueue carries no Version/OriginDeviceId of its own - both live on the
@@ -622,7 +779,8 @@ namespace WorkLedger_Client.Sync
                         $"Sync server returned {(int)response.StatusCode} {response.ReasonPhrase}." +
                         (string.IsNullOrWhiteSpace(body) ? string.Empty : $" {Truncate(body)}"),
                         response.StatusCode,
-                        retryAfterUtc: ResolveRetryAfter(response));
+                        retryAfterUtc: ResolveRetryAfter(response),
+                        responseBody: body);
                 }
 
                 try

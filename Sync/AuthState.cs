@@ -85,6 +85,20 @@ namespace WorkLedger_Client.Sync
     // looks to decide what to *do*.
     public sealed record LoginOutcome(bool Success, UserSummary? User, string? ErrorMessage);
 
+    // WL-146: what one registration or claim did.
+    //
+    // Carries no token, and that is the server's shape rather than an omission here: tokens are
+    // device-scoped and only POST /auth/login mints one, while creating an account is a user-level
+    // act with no device bound to it. A caller that wants to end up signed in must follow a success
+    // with a login - which the coordinator does automatically, because making someone type the
+    // credentials they just chose a second time is worse than one extra round trip.
+    //
+    // CapabilitiesStale says the cached AuthCapabilitiesResponse is describing a server that has
+    // moved on - registration switched off, or the last claimable account claimed - so the caller
+    // should re-probe rather than leave a form on screen that can only fail the same way twice.
+    public sealed record AccountOutcome(
+        bool Success, UserSummary? User, string? ErrorMessage, bool CapabilitiesStale = false);
+
     // Implemented by a provider that authenticates, which today is only ApiSyncProvider -
     // FileSyncProvider syncs through a folder and NullSyncProvider does nothing, and neither
     // has a session to lose.

@@ -108,7 +108,7 @@ Sync is **off by default** — nothing leaves the machine until you choose a mod
 |---|---|---|
 | **Off** | — | The default. No provider is constructed and nothing is contacted. |
 | **Shared folder** | A folder both installs can see | Each push writes one JSON file into `<folder>/changes/`; each pull reads the files the other devices wrote. No server. |
-| **WorkLedger API** | A reachable [WorkLedger-API](https://github.com/dante286/WorkLedger-API) instance and an account on it | Enter your email and password and press **Sign in** once — the server issues a JWT scoped to this device and the client stores it. The password is used for that one call and is **never saved**; only the email is. This device is enrolled as a side effect of signing in. |
+| **WorkLedger API** | A reachable [WorkLedger-API](https://github.com/dante286/WorkLedger-API) instance and an account on it | Enter your email and password and press **Sign in** once — the server issues a JWT scoped to this device and the client stores it. The password is used for that one call and is **never saved**; only the email is. This device is enrolled as a side effect of signing in. No account yet? If the server allows it, **Create an account** appears right there; on a server that already holds data from before user accounts existed, **Claim this server** takes ownership of it instead. |
 
 The **Sync Interval** setting drives a background tick (or `Manual only`, in which case *Sync Now* is the only
 trigger). **Backup Before Merge** takes a copy of `settings.json` and `workledger.db` into
@@ -296,6 +296,12 @@ In outline, it exposes sign-in, registration and account management, `whoami`, t
 `/sync/pull` pair described above, and three read‑only report endpoints. **The endpoint list, configuration
 variables, deployment quickstart, and operational notes are documented in that repository's `README.md`** —
 they are deliberately not restated here, so the two cannot drift.
+
+The app asks the server what it allows (`GET /auth/capabilities`) and shows only that: no registration form on
+a server with signups switched off, a signup-secret field only where one is required, a password rule that is
+the server's own minimum rather than a guess, and **Claim this server** only while there is unclaimed data to
+take. A server too old to answer, or one that is simply unreachable, leaves a working sign-in form rather than
+an error.
 
 Signing in with an email and password mints a bearer token scoped to *this device*, and enrols the device as
 a side effect. The client persists the token and the email — never the password. Because tokens can be

@@ -14,11 +14,13 @@ namespace WorkLedger_Client.Sync
             string message,
             HttpStatusCode? statusCode = null,
             Exception? innerException = null,
-            DateTime? retryAfterUtc = null)
+            DateTime? retryAfterUtc = null,
+            string? responseBody = null)
             : base(message, innerException)
         {
             StatusCode = statusCode;
             RetryAfterUtc = retryAfterUtc;
+            ResponseBody = responseBody;
         }
 
         // Set when the failure was an HTTP response rather than a transport-level fault.
@@ -29,5 +31,11 @@ namespace WorkLedger_Client.Sync
         // lift by themselves, and saying when is the difference between a message someone waits
         // out and one they go looking for an administrator about.
         public DateTime? RetryAfterUtc { get; }
+
+        // WL-146: the raw error body, kept apart from Message so a caller can show the server's own
+        // words rather than "Sync server returned 400 Bad Request. {...}". It matters for exactly
+        // one case - registration validation, where the server knows why the password was refused
+        // and this client deliberately does not duplicate the rule.
+        public string? ResponseBody { get; }
     }
 }

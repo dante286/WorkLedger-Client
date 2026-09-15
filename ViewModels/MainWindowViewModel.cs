@@ -169,6 +169,11 @@ namespace WorkLedger_Client.ViewModels
 
             RefreshSyncStatus();
 
+            // WL-146: probe what the server allows so the panel is already correct the first time
+            // it is opened. Fire-and-forget on purpose - the app must start without waiting on a
+            // network round trip, and the probe degrades to "sign-in only" if it never answers.
+            _ = RefreshAuthPanelAsync();
+
             // A timer-driven sync updates the cursor without anyone pressing anything, so the
             // displayed "last synced" has to follow the orchestrator rather than the button.
             _syncCoordinator.SyncCompleted += OnSyncCompleted;
@@ -295,6 +300,11 @@ namespace WorkLedger_Client.ViewModels
             OnPropertyChanged(nameof(IsApiSyncSelected));
             OnPropertyChanged(nameof(IsSyncConfigured));
             TriggerAutosave();
+
+            // Switching into Api mode is the first moment the auth panel is visible, and the first
+            // moment its capabilities matter.
+            if (value == SyncMode.Api)
+                _ = RefreshAuthPanelAsync();
         }
 
         partial void OnSyncIntervalChanged(SyncInterval value)
@@ -310,6 +320,11 @@ namespace WorkLedger_Client.ViewModels
         partial void OnApiEndpointChanged(string value)
         {
             TriggerAutosave();
+
+            // A different endpoint is a different server with its own policy, so the cached answer
+            // is about somebody else. The coordinator rebuilds its provider on the same trigger,
+            // which is what actually drops the old cache; this re-asks the new one.
+            _ = RefreshAuthPanelAsync(refreshCapabilities: true);
         }
 
         partial void OnApiEmailChanged(string value)
