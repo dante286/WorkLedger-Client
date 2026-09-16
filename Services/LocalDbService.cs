@@ -158,6 +158,40 @@ namespace WorkLedger_Client.Services
                 ClaimedAtUtc = DateTime.UtcNow
             });
 
+        /// <summary>
+        /// WL-143: drops the stamp's <i>identity</i> after the account it names has been deleted,
+        /// leaving the database adoptable again. Writes no user data and deletes none.
+        /// </summary>
+        /// <remarks>
+        /// This is the same shape <see cref="BackfillDatabaseOwnerAsync"/> produces - a row with no
+        /// identity, which <see cref="EvaluateOwnershipAsync"/> already reads as
+        /// <see cref="DatabaseOwnershipVerdict.Unclaimed"/> - so it adds no state, only a second
+        /// way of reaching one that exists.
+        /// <para>
+        /// Called <b>only</b> after a successful <c>DELETE /auth/account</c>, and the guard loses
+        /// nothing by it. WL-138's stamp exists to stop two people's timesheets being merged, and
+        /// the account it was protecting against no longer exists to be merged with; what it would
+        /// otherwise do is refuse the owner - who proved they were the owner by supplying that
+        /// account's password and typing its address - if they ever signed in again with a new
+        /// account on the same machine. Nobody gains access they could not already have had:
+        /// deleting the account required exactly the credentials the stamp was checking for.
+        /// </para>
+        /// <para>
+        /// <c>ClaimedAtUtc</c> is refreshed rather than the row being deleted outright, so the
+        /// table keeps saying "this database has been through a sign-in" - which is what the
+        /// pre-S6 backfill uses it for.
+        /// </para>
+        /// </remarks>
+        public Task<int> ReleaseDatabaseOwnerAsync()
+            => _db.InsertOrReplaceAsync(new DatabaseOwner
+            {
+                Id = DatabaseOwner.SingletonId,
+                UserId = null,
+                Email = null,
+                ApiEndpoint = null,
+                ClaimedAtUtc = DateTime.UtcNow
+            });
+
         // sqlite-net-pcl's CreateTableAsync adds missing columns to an existing table via
         // ALTER TABLE, but leaves pre-existing rows with Version as SQL NULL rather than the
         // C# initializer's 1 (ALTER TABLE ADD COLUMN has no default here). Guard on NULL, not

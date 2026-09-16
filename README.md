@@ -30,7 +30,8 @@ This repository is the **client**. The backend lives in a separate repository, [
 - Driven from the Settings tab: a **Sync Mode** switch (Off / Shared folder / WorkLedger API), device
   registration, a sync interval, a *Sync Now* button, and a last‑synced readout
 - A safety backup taken before the first remote change of a sync run overwrites or deletes local data
-- 157 unit/integration tests, including multi‑device merge scenarios and cross‑repo contract drift guards
+- Account management from the same panel: the devices signed in to your account, changing your password, signing every device out, and deleting the account
+- 277 unit/integration tests, including multi‑device merge scenarios and cross‑repo contract drift guards
 
 **Backend** — implemented and deployable; see [WorkLedger-API](https://github.com/dante286/WorkLedger-API).
 
@@ -108,7 +109,7 @@ Sync is **off by default** — nothing leaves the machine until you choose a mod
 |---|---|---|
 | **Off** | — | The default. No provider is constructed and nothing is contacted. |
 | **Shared folder** | A folder both installs can see | Each push writes one JSON file into `<folder>/changes/`; each pull reads the files the other devices wrote. No server. |
-| **WorkLedger API** | A reachable [WorkLedger-API](https://github.com/dante286/WorkLedger-API) instance and an account on it | Enter your email and password and press **Sign in** once — the server issues a JWT scoped to this device and the client stores it. The password is used for that one call and is **never saved**; only the email is. This device is enrolled as a side effect of signing in. No account yet? If the server allows it, **Create an account** appears right there; on a server that already holds data from before user accounts existed, **Claim this server** takes ownership of it instead. |
+| **WorkLedger API** | A reachable [WorkLedger-API](https://github.com/dante286/WorkLedger-API) instance and an account on it | Enter your email and password and press **Sign in** once — the server issues a JWT scoped to this device and the client stores it. The password is used for that one call and is **never saved**; only the email is. This device is enrolled as a side effect of signing in. No account yet? If the server allows it, **Create an account** appears right there; on a server that already holds data from before user accounts existed, **Claim this server** takes ownership of it instead. Once signed in the same panel lists the devices on your account, changes your password, signs every device out, and — behind a deliberately awkward danger zone — deletes the account. |
 
 The **Sync Interval** setting drives a background tick (or `Manual only`, in which case *Sync Now* is the only
 trigger). **Backup Before Merge** takes a copy of `settings.json` and `workledger.db` into
@@ -309,6 +310,20 @@ revoked server‑side (a password change, a sign‑out‑everywhere, this device
 machine), a rejected token means **"you have been signed out"** rather than **"try again"**: the client stops
 syncing and waits for a person, rather than retrying credentials it does not have. Your work keeps saving
 locally throughout, and goes up when you sign back in.
+
+Signed in, the panel is also where the account is managed. It lists every device signed in to the account,
+marks the one you are looking at, and can remove any of them — **including this one**, which is how you sign a
+machine out from somewhere else. Removing a device revokes its access and nothing more: everything it
+recorded belongs to the *account*, stays there, and the device reconnects simply by signing in again.
+Changing your password and *Sign out everywhere* both sign your **other** devices out and keep this one
+signed in.
+
+Deleting the account is deliberately the hardest thing in the panel to do by accident — a collapsed section,
+your password, your email typed to match, and a confirmation. What it does is worth stating precisely, once:
+**the server's copy is deleted permanently and immediately, with no undo, and this device's copy is kept.**
+Every project, task and time entry stays in the local database, the app carries on working offline, and sync
+switches itself off because there is no longer an account to sync with. If you want a copy somewhere else,
+**Export CSV** on the Reports tab is the way to take one — do it before you delete.
 
 ### The shared contract
 

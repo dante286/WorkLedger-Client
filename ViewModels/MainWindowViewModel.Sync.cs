@@ -150,6 +150,47 @@ namespace WorkLedger_Client.ViewModels
         // behaviour item 4e exists to avoid - just once a session instead of once a tick.
         private bool _authStateObserved;
 
+        // WL-141. The account's devices, in the order the server sent them: most-recently-seen
+        // first, never-seen last. Rebuilt wholesale on every refresh rather than merged, because
+        // LastSeenUtc moves on every sync from every device and a stale row is a lie about where
+        // someone is signed in.
+        public ObservableCollection<AccountDeviceViewModel> Devices { get; } = new();
+
+        // What to say instead of the list: "nothing asked yet", "couldn't reach the server", or the
+        // reason there is nothing to show. Separate from an empty collection on purpose - a failed
+        // request and an account with no devices are not the same fact.
+        [ObservableProperty]
+        private string _deviceListMessage = string.Empty;
+
+        [ObservableProperty]
+        private bool _isLoadingDevices;
+
+        // WL-142. The change-password form, collapsed until asked for. Three bound fields, none of
+        // them persisted and all three cleared the instant the call returns - the same discipline
+        // the sign-in password is held to, for the same reason.
+        [ObservableProperty]
+        private bool _isChangePasswordOpen;
+
+        [ObservableProperty]
+        private string _currentPassword = string.Empty;
+
+        [ObservableProperty]
+        private string _newPassword = string.Empty;
+
+        [ObservableProperty]
+        private string _confirmNewPassword = string.Empty;
+
+        // WL-143. The danger zone, collapsed by default and requiring two deliberate inputs once
+        // opened. Neither field is persisted; both are cleared the moment the call returns.
+        [ObservableProperty]
+        private bool _isDangerZoneOpen;
+
+        [ObservableProperty]
+        private string _deleteAccountPassword = string.Empty;
+
+        [ObservableProperty]
+        private string _deleteAccountConfirmEmail = string.Empty;
+
         public bool IsFileSyncSelected => SyncMode == SyncMode.File;
 
         public bool IsApiSyncSelected => SyncMode == SyncMode.Api;
@@ -305,6 +346,251 @@ namespace WorkLedger_Client.ViewModels
             SignupSecret = string.Empty;
         }
 
+        /// <summary>
+        /// Re-reads the account's devices. WL-141.
+        /// </summary>
+        [RelayCommand]
+        private async Task LoadDevicesAsync()
+        {
+            if (IsLoadingDevices)
+                return;
+
+            IsLoadingDevices = true;
+            try
+            {
+                await ReloadDevicesAsync();
+            }
+            finally
+            {
+                IsLoadingDevices = false;
+            }
+        }
+
+        /// <summary>
+        /// Detaches one device from the account, after a confirmation that says what it does and
+        /// does not do. WL-141.
+        /// </summary>
+        /// <remarks>
+        /// The current device is offered like any other. It is permitted server-side and means
+        /// "sign this app out" - see <see cref="AccountDeviceViewModel.ConfirmationMessage"/>, which
+        /// says so in the dialog rather than leaving the button to surprise someone.
+        /// </remarks>
+        [RelayCommand]
+        private async Task RemoveDeviceAsync(AccountDeviceViewModel? device)
+        {
+            if (device is null)
+                return;
+
+            var confirmed = await ConfirmAsync(
+                "Remove device", device.ConfirmationMessage, "Remove device");
+
+            if (!confirmed)
+                return;
+
+            var (success, message) = await _syncCoordinator.RemoveDeviceAsync(device.DeviceId);
+
+            // Either way: a success changed the list, and a failure may have been a revocation that
+            // changed the whole panel.
+            await RefreshAuthPanelAsync();
+            _toastService?.ShowToast(message, success ? 5000 : 4500);
+        }
+
+        // Shared by every destructive action in this panel. Returns false when there is no window
+        // to parent a dialog to, which is the safe answer: no confirmation, no action.
+        private static async Task<bool> ConfirmAsync(string title, string message, string confirmLabel)
+        {
+            var desktop = Avalonia.Application.Current?.ApplicationLifetime
+                as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime;
+
+            if (desktop?.MainWindow is not { } owner)
+                return false;
+
+            var dialog = new Views.ConfirmationDialog(title, message, confirmLabel);
+            return await dialog.ShowDialog<bool>(owner);
+        }
+
+        // Pulls the device list fresh. Signed out there is nothing to ask for and no token to ask
+        // with, so the list is emptied rather than left showing the previous session's devices.
+        private async Task ReloadDevicesAsync()
+        {
+            if (_settings.SyncMode != SyncMode.Api || !_syncCoordinator.ApiAuth.CanSync)
+            {
+                Devices.Clear();
+                DeviceListMessage = string.Empty;
+                return;
+            }
+
+            var outcome = await _syncCoordinator.GetDevicesAsync();
+
+            Devices.Clear();
+            if (!outcome.Success)
+            {
+                DeviceListMessage = outcome.ErrorMessage ?? "Couldn't load this account's devices.";
+                return;
+            }
+
+            foreach (var device in outcome.Devices)
+                Devices.Add(new AccountDeviceViewModel(device));
+
+            // An account always has at least the device asking, so an empty list here means the
+            // server answered with something unexpected rather than "you have no devices".
+            DeviceListMessage = Devices.Count == 0
+                ? "The server reported no devices for this account."
+                : string.Empty;
+        }
+
+        [RelayCommand]
+        private void ToggleChangePassword()
+        {
+            IsChangePasswordOpen = !IsChangePasswordOpen;
+            ClearPasswordForm();
+        }
+
+        /// <summary>
+        /// Changes the account password. WL-142.
+        /// </summary>
+        /// <remarks>
+        /// Validated against the server's own <c>MinPasswordLength</c> from the cached capabilities
+        /// and nothing else - the server deliberately has no composition rules (NIST 800-63B:
+        /// length is the control that matters), and a client demanding a symbol would refuse a
+        /// password the server would have taken.
+        /// <para>
+        /// A wrong current password comes back as a message and leaves the session alone. It is
+        /// emphatically <b>not</b> the revoked-session path: see <c>credentialGuarded</c> in
+        /// <c>ApiSyncProvider</c>, which is what keeps the two 401s apart.
+        /// </para>
+        /// </remarks>
+        [RelayCommand]
+        private async Task SubmitPasswordChangeAsync()
+        {
+            var invalid = AuthPanelState.ValidateNewPassword(
+                NewPassword, ConfirmNewPassword, _capabilities?.MinPasswordLength ?? 0);
+
+            if (invalid != null)
+            {
+                _toastService?.ShowToast(invalid, 4000);
+                return;
+            }
+
+            var current = CurrentPassword;
+            var next = NewPassword;
+
+            // Out of the bound fields before the await: they are attached to controls the user can
+            // still see, and no outcome makes leaving them there the right answer.
+            ClearPasswordForm();
+
+            var (success, message) = await _syncCoordinator.ChangePasswordAsync(current, next);
+            if (success)
+                IsChangePasswordOpen = false;
+
+            await RefreshAuthPanelAsync();
+            _toastService?.ShowToast(message, success ? 5000 : 4500);
+        }
+
+        /// <summary>
+        /// Signs every device out, keeping this one signed in. WL-142.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately worded to contrast with the local <c>Sign out</c> beside it - that one drops
+        /// this app's token and tells the server nothing; this one kills every token the account
+        /// has and takes a replacement for this device. Both leave local data alone, and both say
+        /// so, because "sign out" is the phrase people most often read as "and delete my stuff".
+        /// </remarks>
+        [RelayCommand]
+        private async Task SignOutEverywhereAsync()
+        {
+            var confirmed = await ConfirmAsync(
+                "Sign out everywhere",
+                "Sign out every device on this account?\n\n"
+                + "Every other device will need to sign in again with your password. This one stays "
+                + "signed in - the server issues it a fresh token as part of the same request.\n\n"
+                + "Nothing is deleted anywhere: your projects, tasks and time entries stay on the "
+                + "account and on every device that holds them.",
+                "Sign out everywhere");
+
+            if (!confirmed)
+                return;
+
+            var (success, message) = await _syncCoordinator.SignOutEverywhereAsync();
+
+            await RefreshAuthPanelAsync();
+            _toastService?.ShowToast(message, success ? 5000 : 4500);
+        }
+
+        private void ClearPasswordForm()
+        {
+            CurrentPassword = string.Empty;
+            NewPassword = string.Empty;
+            ConfirmNewPassword = string.Empty;
+        }
+
+        [RelayCommand]
+        private void ToggleDangerZone()
+        {
+            IsDangerZoneOpen = !IsDangerZoneOpen;
+            ClearDeleteAccountForm();
+        }
+
+        /// <summary>
+        /// Deletes the account on the server. WL-143. <b>Immediate, total, irreversible.</b>
+        /// </summary>
+        /// <remarks>
+        /// Three gates before anything is sent, deliberately: the section is collapsed, the email
+        /// has to be typed to match, and the confirmation has to be accepted. The email is checked
+        /// <i>locally first</i> - the server checks it too, but only after it has checked the
+        /// password, so letting a typo through would spend one of the five attempts standing
+        /// between this user and a lockout for a mistake this client can see.
+        /// <para>
+        /// On success the session is stood down and sync is switched off by the coordinator; the
+        /// two lines below are this half of it, keeping the bound properties in step so the next
+        /// autosave does not write the deleted account's mode and address straight back.
+        /// </para>
+        /// <para>
+        /// On failure <b>nothing changes</b> - not the token, not the mode, not a single local row.
+        /// A failed guard leaves the account fully intact server-side, so anything cleared here
+        /// would invent the problem the guard just prevented.
+        /// </para>
+        /// </remarks>
+        [RelayCommand]
+        private async Task DeleteAccountAsync()
+        {
+            var confirmed = await ConfirmAsync(
+                "Delete account",
+                AuthPanelState.DescribeAccountDeletion(_settings.ApiEmail),
+                "Delete permanently");
+
+            if (!confirmed)
+                return;
+
+            var password = DeleteAccountPassword;
+            var confirmEmail = DeleteAccountConfirmEmail;
+            ClearDeleteAccountForm();
+
+            var (success, message) = await _syncCoordinator.DeleteAccountAsync(password, confirmEmail);
+            if (success)
+            {
+                // The coordinator has already written both to settings. Mirroring them into the
+                // bound properties is what stops the next autosave - which rebuilds settings from
+                // these - putting the deleted account's email and Api mode back.
+                ApiEmail = string.Empty;
+                SyncMode = SyncMode.Off;
+
+                IsDangerZoneOpen = false;
+                IsChangePasswordOpen = false;
+            }
+
+            await RefreshAuthPanelAsync();
+
+            // Long, because it is the only place the user is told their local work survived.
+            _toastService?.ShowToast(message, success ? 9000 : 5000);
+        }
+
+        private void ClearDeleteAccountForm()
+        {
+            DeleteAccountPassword = string.Empty;
+            DeleteAccountConfirmEmail = string.Empty;
+        }
+
         [RelayCommand]
         private Task RefreshCapabilitiesAsync() => RefreshAuthPanelAsync(refreshCapabilities: true);
 
@@ -317,6 +603,14 @@ namespace WorkLedger_Client.ViewModels
             // token stops being used here but is not revoked server-side. That is logout-all, and
             // it is plan 10.
             _syncCoordinator.SignOut();
+
+            // Nothing in the signed-in half of the panel applies any more, and a half-typed
+            // password left in a collapsed form is the kind of thing that surprises someone later.
+            IsChangePasswordOpen = false;
+            ClearPasswordForm();
+            IsDangerZoneOpen = false;
+            ClearDeleteAccountForm();
+
             await RefreshAuthPanelAsync();
 
             _toastService?.ShowToast(
@@ -363,6 +657,10 @@ namespace WorkLedger_Client.ViewModels
                 {
                     _signedInDisplayName = null;
                 }
+
+                // WL-141. After whoami, so a session revoked elsewhere has already been discovered
+                // and this doesn't spend a second request finding the same 401 out again.
+                await ReloadDevicesAsync();
             }
 
             RefreshSyncStatus();

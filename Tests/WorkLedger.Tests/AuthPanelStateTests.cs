@@ -236,6 +236,56 @@ namespace WorkLedger.Tests
             }
         }
 
+        // ------------------------------------------ WL-143/WL-144: the account-deletion confirmation
+
+        [Fact]
+        public void TheDeletionConfirmation_MakesItsFourStatementsInOrder()
+        {
+            // The ORDER is the specification, not a preference. Someone reading a destructive
+            // confirmation reads the top and skims the rest, so the two facts that cannot be
+            // recovered from go first and the reassurance goes after them. Leading with "your local
+            // data is kept" would have people stop at the reassurance and miss that the server's
+            // copy goes permanently.
+            var text = AuthPanelState.DescribeAccountDeletion(Email);
+
+            var immediate = text.IndexOf("permanently and immediately", StringComparison.Ordinal);
+            var noUndo = text.IndexOf("no undo", StringComparison.Ordinal);
+            var localKept = text.IndexOf("is kept", StringComparison.Ordinal);
+            var export = text.IndexOf("Export CSV", StringComparison.Ordinal);
+
+            Assert.True(immediate >= 0 && noUndo >= 0 && localKept >= 0 && export >= 0);
+            Assert.True(immediate < noUndo, "the permanence must come before the no-undo");
+            Assert.True(noUndo < localKept, "the no-undo must come before the reassurance");
+            Assert.True(localKept < export, "the reassurance must come before the export advice");
+        }
+
+        [Fact]
+        public void TheDeletionConfirmation_NamesTheAccountAndPointsAtTheLocalExport()
+        {
+            var text = AuthPanelState.DescribeAccountDeletion(Email);
+
+            // Named, so nobody deletes the wrong account from a stale panel.
+            Assert.Contains(Email, text);
+
+            // The Reports tab's own CSV export, which is already in the app. The server's
+            // /reports/*?format=csv is deliberately NOT offered instead: this client does not
+            // consume the server's report endpoints at all, and an account about to stop existing
+            // is the worst possible moment to introduce a second export path.
+            Assert.Contains("Reports tab", text);
+
+            // And the thing that makes the whole feature survivable.
+            Assert.Contains("Nothing local is deleted", text);
+        }
+
+        [Fact]
+        public void TheDeletionConfirmation_StillReadsSensiblyWithoutAnEmail()
+        {
+            var text = AuthPanelState.DescribeAccountDeletion(null);
+
+            Assert.Contains("this account", text);
+            Assert.DoesNotContain("Delete  from", text);
+        }
+
         // ------------------------------------------------------- password validation (item 3)
 
         [Fact]

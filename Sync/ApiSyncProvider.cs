@@ -521,6 +521,257 @@ namespace WorkLedger_Client.Sync
             }
         }
 
+        // ------------------------------------------------------------------ WL-140: account management
+        //
+        // The five calls behind the signed-in half of the panel (plan 10). All authenticated, all
+        // total, all scoped entirely by the token - none of them sends a user identifier, because
+        // the server accepts none. There is no admin surface to build against.
+
+        /// <summary>
+        /// The devices signed in to this account, in the order the server sent them. WL-141.
+        /// </summary>
+        /// <remarks>
+        /// The order is the server's and is kept: most-recently-seen first, never-seen last. It
+        /// pays an extra ORDER BY term to stop a device that has never made a request floating
+        /// above the one the user is reading the list on, and re-sorting here would undo that.
+        /// <para>
+        /// <see cref="DeviceSummary.DeviceId"/> is the client's own per-install GUID - the same
+        /// value stamped as <c>OriginDeviceId</c> on every row - and the only public identifier
+        /// there is. The server's internal row id is never on the wire, exactly as synced entities
+        /// are addressed by <c>SyncId</c> and never by their local <c>Id</c>.
+        /// </para>
+        /// </remarks>
+        public async Task<DeviceListOutcome> GetDevicesAsync()
+        {
+            try
+            {
+                var devices = await SendForJsonAsync<List<DeviceSummary>>(
+                    () => new HttpRequestMessage(HttpMethod.Get, new Uri(_baseUri, "auth/devices")));
+
+                return DeviceListOutcome.Loaded(devices);
+            }
+            catch (SyncProviderException ex)
+            {
+                Debug.WriteLine($"ApiSyncProvider device list failed: {ex.Message}");
+                return DeviceListOutcome.Failed(
+                    DescribeAccountActionFailure(ex, "Couldn't load this account's devices."));
+            }
+        }
+
+        /// <summary>
+        /// Detaches one device from this account. WL-141.
+        /// </summary>
+        /// <remarks>
+        /// <b>This removes the device's access and nothing else.</b> Projects, tasks and time
+        /// entries belong to the <i>user</i>; <c>OriginDeviceId</c> on a row is provenance, not
+        /// ownership. The server states this is the single most plausible wrong assumption about
+        /// the endpoint, so it is worth repeating here: nothing a retired laptop recorded is
+        /// deleted, and the laptop re-enrols by signing in again under the same
+        /// <c>(UserId, DeviceId)</c>.
+        /// <para>
+        /// <b>Removing your OWN current device is allowed and is not a bug.</b> It means "sign this
+        /// device out", and it is the only way to drop a token from the device holding it. The
+        /// response is still a <c>204</c>; every request after it is a <c>401</c>, which this
+        /// provider then reads as a revoked session - correctly, because it is one. Do not add a
+        /// guard here: <see cref="DeviceSummary.IsCurrent"/> exists so a caller can warn, and a
+        /// silent refusal would be this client overriding a deliberate server decision.
+        /// </para>
+        /// </remarks>
+        public async Task<AccountActionOutcome> DeleteDeviceAsync(string deviceId)
+        {
+            if (string.IsNullOrWhiteSpace(deviceId))
+                return AccountActionOutcome.Failed("No device was selected.");
+
+            try
+            {
+                // 204, no body - hence the no-content send. EscapeDataString because this goes in
+                // the path; a DeviceId is a GUID today and this costs nothing if it stays one.
+                await SendForNoContentAsync(() => new HttpRequestMessage(
+                    HttpMethod.Delete,
+                    new Uri(_baseUri, $"auth/devices/{Uri.EscapeDataString(deviceId)}")));
+
+                return AccountActionOutcome.Succeeded;
+            }
+            catch (SyncProviderException ex)
+            {
+                Debug.WriteLine($"ApiSyncProvider device removal failed: {ex.Message}");
+
+                // A 404 is a real answer, not a transport problem: the device is unknown OR
+                // belongs to someone else, and the server refuses to say which - distinguishing
+                // them would confirm another account's device id to anyone willing to guess.
+                // Either way it is already not on this account, which is what the caller wanted.
+                return ex.StatusCode == HttpStatusCode.NotFound
+                    ? AccountActionOutcome.Failed("That device isn't on this account any more.")
+                    : AccountActionOutcome.Failed(
+                        DescribeAccountActionFailure(ex, "Couldn't remove that device."));
+            }
+        }
+
+        /// <summary>
+        /// Signs every device out by rotating the account's security stamp, and keeps this one
+        /// signed in with the fresh token that comes back. WL-142.
+        /// </summary>
+        /// <remarks>
+        /// <b>Storing the returned token is not optional.</b> The stamp bump kills every
+        /// outstanding token including this app's own, and the replacement in the response is the
+        /// server making sure "sign my other devices out" does not sign out the device asking.
+        /// Drop it and the feature looks like it logged the user out as a side effect.
+        /// <para>
+        /// Device rows survive - only tokens die, and each device gets back in by signing in
+        /// again. <see cref="DeleteDeviceAsync"/> is what actually detaches one.
+        /// </para>
+        /// </remarks>
+        public async Task<AccountActionOutcome> LogoutAllAsync()
+        {
+            try
+            {
+                // No body: the endpoint is scoped entirely by the token and takes no parameters,
+                // so there is nothing to send and no request type for it in the contract.
+                var response = await SendForJsonAsync<LoginResponse>(
+                    () => new HttpRequestMessage(HttpMethod.Post, new Uri(_baseUri, "auth/logout-all")));
+
+                AdoptFreshToken(response);
+                return AccountActionOutcome.Succeeded;
+            }
+            catch (SyncProviderException ex)
+            {
+                Debug.WriteLine($"ApiSyncProvider logout-all failed: {ex.Message}");
+                return AccountActionOutcome.Failed(
+                    DescribeAccountActionFailure(ex, "Couldn't sign the other devices out."));
+            }
+        }
+
+        /// <summary>
+        /// Changes the account password, re-verifying the current one, and keeps this device
+        /// signed in with the fresh token that comes back. WL-142.
+        /// </summary>
+        /// <remarks>
+        /// The current password is re-checked even though this call already carries a valid token,
+        /// on the server's insistence: a stolen token must not be enough to take an account over.
+        /// <para>
+        /// <b>A <c>401</c> here means the typed password was wrong, NOT that the session died</b> -
+        /// see <c>credentialGuarded</c> on <c>SendAuthenticatedAsync</c> for how the two are told
+        /// apart and why it matters. A <c>400</c> is the server's own password policy speaking, and
+        /// its sentence is passed through rather than reconstructed from a rule this client
+        /// deliberately does not hold.
+        /// </para>
+        /// </remarks>
+        public async Task<AccountActionOutcome> ChangePasswordAsync(string currentPassword, string newPassword)
+        {
+            try
+            {
+                var response = await SendForJsonAsync<LoginResponse>(
+                    () => BuildJsonRequest(
+                        HttpMethod.Post, "auth/password", new ChangePasswordRequest(currentPassword, newPassword)),
+                    credentialGuarded: true);
+
+                AdoptFreshToken(response);
+                return AccountActionOutcome.Succeeded;
+            }
+            catch (SyncProviderException ex)
+            {
+                Debug.WriteLine($"ApiSyncProvider password change failed: {ex.Message}");
+
+                return ex.StatusCode switch
+                {
+                    HttpStatusCode.Unauthorized =>
+                        AccountActionOutcome.Failed("That current password isn't right."),
+
+                    // The server owns the password policy - length only, no composition rules - so
+                    // its refusal is more accurate than anything this client could reconstruct.
+                    HttpStatusCode.BadRequest => AccountActionOutcome.Failed(
+                        ExtractServerError(ex) ?? "The server wouldn't accept that new password."),
+
+                    _ => AccountActionOutcome.Failed(
+                        DescribeAccountActionFailure(ex, "Couldn't change the password."))
+                };
+            }
+        }
+
+        /// <summary>
+        /// Deletes the account and everything the server holds for it. WL-143.
+        /// </summary>
+        /// <remarks>
+        /// <b>Immediate, total and irreversible</b> - a hard delete with no grace period and no
+        /// undo. Both gates are the server's: <paramref name="password"/> because a leaked token
+        /// must not be enough to destroy an account, and <paramref name="confirmEmail"/> because a
+        /// typed confirmation independently stops a client pointed at the wrong session from
+        /// deleting the wrong account.
+        /// <para>
+        /// <b>This touches nothing local.</b> The SQLite database, the pending <c>SyncQueue</c> and
+        /// every project, task and entry in them are untouched by design - see the caller, which is
+        /// where the session is stood down afterwards.
+        /// </para>
+        /// </remarks>
+        public async Task<AccountActionOutcome> DeleteAccountAsync(string password, string confirmEmail)
+        {
+            try
+            {
+                // A DELETE with a body. Unusual, and the server's own comment explains why it has
+                // to be declared [FromBody] there: minimal APIs refuse an inferred body on DELETE.
+                await SendForNoContentAsync(
+                    () => BuildJsonRequest(
+                        HttpMethod.Delete, "auth/account", new DeleteAccountRequest(password, confirmEmail)),
+                    credentialGuarded: true);
+
+                return AccountActionOutcome.Succeeded;
+            }
+            catch (SyncProviderException ex)
+            {
+                Debug.WriteLine($"ApiSyncProvider account deletion failed: {ex.Message}");
+
+                return ex.StatusCode switch
+                {
+                    HttpStatusCode.Unauthorized => AccountActionOutcome.Failed("That password isn't right."),
+
+                    // The email guard. Reachable only if the client-side check was skipped or the
+                    // signed-in address moved underneath it, since the caller mirrors this locally
+                    // to keep a typo away from the server's failed-password counter.
+                    HttpStatusCode.BadRequest => AccountActionOutcome.Failed(
+                        ExtractServerError(ex) ?? "That email address doesn't match this account."),
+
+                    _ => AccountActionOutcome.Failed(
+                        DescribeAccountActionFailure(ex, "Couldn't delete the account."))
+                };
+            }
+        }
+
+        // Both endpoints that rotate the security stamp hand back a replacement token for THIS
+        // device. Storing it is what keeps the app signed in through an act that, server-side,
+        // just invalidated every token the account had - this one included.
+        private void AdoptFreshToken(LoginResponse response)
+        {
+            _tokens.Save(response.Token, response.ExpiresAtUtc);
+
+            // The server just answered an authenticated request and minted a token, so whatever the
+            // last verdict was, it is stale. Clearing it lets Auth derive SignedIn from the token
+            // rather than leaving a revocation banner over a session that demonstrably works.
+            _verdict = null;
+        }
+
+        // The shared tail of the five: the failures that mean the same thing whatever was being
+        // asked for. Anything endpoint-specific is handled by the caller before this is reached.
+        private static string DescribeAccountActionFailure(SyncProviderException ex, string fallback) => ex.StatusCode switch
+        {
+            // The session, not the request. The verdict has already been recorded by the time this
+            // runs, so the panel will be showing a sign-in form by the time it is read.
+            HttpStatusCode.Unauthorized => "You've been signed out - sign in again.",
+
+            // A pre-user-accounts row with no password to re-verify. Practically unreachable, since
+            // such an account cannot sign in in the first place.
+            HttpStatusCode.Conflict => ExtractServerError(ex)
+                ?? "This account has no password set yet - claim it first.",
+
+            HttpStatusCode.TooManyRequests =>
+                "The server is rate-limiting requests from this address. Try again shortly.",
+
+            // No status code at all means nothing answered: a dead host, DNS, a timeout. Worth
+            // keeping the transport's own words for, because it is the one failure worth retrying.
+            null => ex.Message,
+
+            _ => fallback
+        };
+
         private static SyncChangeDto ToChangeDto(SyncQueue queueEntry)
         {
             // SyncQueue carries no Version/OriginDeviceId of its own - both live on the
@@ -690,7 +941,43 @@ namespace WorkLedger_Client.Sync
         // minutes ahead of expiry. Renewal now needs a password this client does not store, so
         // there is nothing left for it to call - and with tokens lasting a year, expiry is better
         // handled as the free SessionExpired check in Auth than as a margin.
-        private async Task<T> SendForJsonAsync<T>(Func<HttpRequestMessage> requestFactory)
+        private Task<T> SendForJsonAsync<T>(Func<HttpRequestMessage> requestFactory, bool credentialGuarded = false)
+            => SendAuthenticatedAsync(
+                () => SendOnceForJsonAsync<T>(requestFactory, authorize: true), credentialGuarded);
+
+        // WL-140: the same policy for an endpoint that answers 204 with an empty body.
+        //
+        // DELETE /auth/devices/{id} and DELETE /auth/account both do, and SendForJsonAsync would
+        // fail them at the deserialize step - the request having already succeeded. Inventing an
+        // empty response type to deserialize into would work and would be a lie about the wire.
+        private Task SendForNoContentAsync(Func<HttpRequestMessage> requestFactory, bool credentialGuarded = false)
+            => SendAuthenticatedAsync(
+                async () =>
+                {
+                    await SendOnceAsync(requestFactory, authorize: true);
+
+                    // A value only because the wrapper is generic; nothing reads it.
+                    return true;
+                },
+                credentialGuarded);
+
+        // Plan 8 item 4c's 401 rules, factored out so every authenticated call gets them
+        // identically rather than by each remembering to.
+        //
+        // credentialGuarded is WL-142's one exception, and it is a real ambiguity on the wire
+        // rather than a convenience. POST /auth/password and DELETE /auth/account re-verify the
+        // password *inside the handler* and answer a wrong one with a 401 - the same status the
+        // bearer middleware uses for a dead token. Two opposite meanings, one status code:
+        //
+        //   * the middleware's 401 means the SESSION is gone, and the app must show a sign-in form;
+        //   * the handler's 401 means the TYPED PASSWORD was wrong, and the session is perfectly
+        //     fine - routing it into the signed-out flow would sign the user out for a typo.
+        //
+        // They are told apart by the body. The server's own failures carry {"error":"..."} (its
+        // AuthEndpoints.Error); a bearer challenge has an empty body and puts its reason in the
+        // WWW-Authenticate header. So a 401 WITH a server error body on one of these two endpoints
+        // is the guard, and it is rethrown untouched: no verdict, no login attempt.
+        private async Task<T> SendAuthenticatedAsync<T>(Func<Task<T>> attempt, bool credentialGuarded = false)
         {
             // Whether the SERVER refused a token, or we simply never had one. The two look
             // identical from the catch below and mean opposite things to a user: "you were signed
@@ -699,10 +986,15 @@ namespace WorkLedger_Client.Sync
 
             try
             {
-                return await SendOnceForJsonAsync<T>(requestFactory, authorize: true);
+                return await attempt();
             }
             catch (SyncProviderException ex) when (ex.StatusCode == HttpStatusCode.Unauthorized)
             {
+                // The guard failed, not the session. Say nothing about the auth state - see the
+                // comment on credentialGuarded above.
+                if (credentialGuarded && ExtractServerError(ex) is not null)
+                    throw;
+
                 if (hadToken)
                     _verdict = AuthStatus.SessionRevoked;
 
@@ -724,7 +1016,7 @@ namespace WorkLedger_Client.Sync
 
                 try
                 {
-                    return await SendOnceForJsonAsync<T>(requestFactory, authorize: true);
+                    return await attempt();
                 }
                 catch (SyncProviderException retryEx) when (retryEx.StatusCode == HttpStatusCode.Unauthorized)
                 {
@@ -737,10 +1029,15 @@ namespace WorkLedger_Client.Sync
             }
         }
 
-        // One attempt, no renewal. A fresh HttpRequestMessage per call because a message
-        // that has been sent cannot be sent again - hence the factory rather than an
-        // instance parameter.
-        private async Task<T> SendOnceForJsonAsync<T>(Func<HttpRequestMessage> requestFactory, bool authorize = false)
+        // One attempt, no renewal, and the response body as a string. A fresh HttpRequestMessage
+        // per call because a message that has been sent cannot be sent again - hence the factory
+        // rather than an instance parameter.
+        //
+        // Split from SendOnceForJsonAsync so a 204 with no body is reachable without pretending
+        // there is JSON to parse: everything up to and including "did the server say yes" is the
+        // same for both, and only the last step differs.
+        private async Task<(HttpStatusCode StatusCode, string Body)> SendOnceAsync(
+            Func<HttpRequestMessage> requestFactory, bool authorize = false)
         {
             using var request = requestFactory();
 
@@ -783,21 +1080,28 @@ namespace WorkLedger_Client.Sync
                         responseBody: body);
                 }
 
-                try
-                {
-                    var parsed = JsonSerializer.Deserialize<T>(body, SyncJson.Options);
-                    if (parsed is null)
-                        throw new SyncProviderException("Sync server returned an empty response body.", response.StatusCode);
+                return (response.StatusCode, body);
+            }
+        }
 
-                    return parsed;
-                }
-                catch (JsonException ex)
-                {
-                    throw new SyncProviderException(
-                        $"Sync server returned a response that could not be parsed: {ex.Message}",
-                        response.StatusCode,
-                        ex);
-                }
+        private async Task<T> SendOnceForJsonAsync<T>(Func<HttpRequestMessage> requestFactory, bool authorize = false)
+        {
+            var (statusCode, body) = await SendOnceAsync(requestFactory, authorize);
+
+            try
+            {
+                var parsed = JsonSerializer.Deserialize<T>(body, SyncJson.Options);
+                if (parsed is null)
+                    throw new SyncProviderException("Sync server returned an empty response body.", statusCode);
+
+                return parsed;
+            }
+            catch (JsonException ex)
+            {
+                throw new SyncProviderException(
+                    $"Sync server returned a response that could not be parsed: {ex.Message}",
+                    statusCode,
+                    ex);
             }
         }
 
