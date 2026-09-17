@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
 using Avalonia.Threading;
@@ -266,6 +266,11 @@ namespace WorkLedger_Client.ViewModels
                 // recognized, which may differ in case from what was typed.
                 ApiEmail = _settings.ApiEmail;
                 IsCreateAccountOpen = false;
+
+                // WL-148: a sign-in can adopt this profile for the account that just signed in,
+                // which renames it from "Local - not signed in" without any switch happening - so
+                // the list is re-read here as well as after a switch.
+                RefreshProfiles();
             }
 
             await RefreshAuthPanelAsync();

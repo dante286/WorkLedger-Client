@@ -43,10 +43,12 @@ namespace WorkLedger_Client.Services
         // wanted later it implements ApiSyncProvider's Func<ApiCredentials?> accessor and
         // nothing else changes - and Invariant L still bounds it to one unattended failed
         // attempt per credential, so remembering one cannot reintroduce the lockout storm.
+        [JsonIgnore] // WL-148: account-scoped, so it lives in profile.json, never in settings.json.
         public string ApiEmail { get; set; } = string.Empty;
 
         // The JWT the *server* issued to this (user, device) pair via POST /auth/login - not a
         // hand-entered secret. Persisted so a restart doesn't force a fresh sign-in.
+        [JsonIgnore] // WL-148: account-scoped, so it lives in profile.json, never in settings.json.
         public string ApiToken { get; set; } = string.Empty;
 
         // From LoginResponse.ExpiresAtUtc. Lets the app reach "your session has expired" without
@@ -58,12 +60,14 @@ namespace WorkLedger_Client.Services
         // carries a security stamp, so a password change, a sign-out-everywhere, or this device
         // being removed from another machine kills it well before this instant. That arrives as
         // a 401 and is handled as a revocation - see ApiSyncProvider.
+        [JsonIgnore] // WL-148: account-scoped, so it lives in profile.json, never in settings.json.
         public DateTime? ApiTokenExpiresAtUtc { get; set; }
 
         // WL-92: the pull cursor, persisted so it survives a restart, and holding the value
         // the *provider* reported rather than this device's own clock. There is exactly one
         // "last synced" timestamp in this app by design - if a Sync settings section needs
         // something to display (WL-95), it displays this.
+        [JsonIgnore] // WL-148: account-scoped, so it lives in profile.json, never in settings.json.
         public DateTime? LastSyncedAtUtc { get; set; }
 
         // WL-61: how long FileSyncProvider keeps processed change files in the sync folder
@@ -132,15 +136,49 @@ namespace WorkLedger_Client.Services
         OnClose = 999
     }
 
+    // WL-148: the account-scoped half of AppSettings, and the entire contents of a profile's
+    // profile.json.
+    //
+    // These four were global fields holding per-account state, which is a conflation that
+    // pre-dates profiles and bites without them: a restore, a data-directory move or a pre-merge
+    // backup can already pair a token with a database it was never issued for. They are written to
+    // exactly one file - hence [JsonIgnore] on the AppSettings properties - so there is never a
+    // stale second copy of a token on disk to wonder about.
+    internal class ProfileSettings
+    {
+        public string ApiEmail { get; set; } = string.Empty;
+
+        public string ApiToken { get; set; } = string.Empty;
+
+        public DateTime? ApiTokenExpiresAtUtc { get; set; }
+
+        public DateTime? LastSyncedAtUtc { get; set; }
+    }
+
     public class SettingsService
     {
         private readonly string _dataDirectory;
         private readonly string _settingsPath;
 
+        // Not readonly, and the only mutable path in this class: a live profile switch re-points
+        // it rather than rebuilding the service, so every holder of this instance - the view
+        // model, the coordinator, SettingsSyncStore - keeps working without being rewired.
+        private string _profileDirectory;
+
         public const string DefaultDbFileName = "workledger.db";
         public const string SettingsFileName = "settings.json";
 
-        public SettingsService(string? customDataDirectory = null)
+        // WL-148. Sits beside the database it belongs to, so it travels with the rows through a
+        // backup, a restore and a data-directory move - the same reasoning that put WL-138's
+        // ownership stamp inside workledger.db rather than in settings.json.
+        public const string ProfileSettingsFileName = "profile.json";
+
+        /// <param name="profileDirectory">
+        /// Where this profile's database and profile.json live. Defaults to the data directory
+        /// itself, which is exactly the pre-WL-148 layout - so a SettingsService constructed with
+        /// one argument still means what it has always meant.
+        /// </param>
+        public SettingsService(string? customDataDirectory = null, string? profileDirectory = null)
         {
             // Determine the data directory
             _dataDirectory = customDataDirectory ?? GetDefaultDataDirectory();
@@ -152,6 +190,36 @@ namespace WorkLedger_Client.Services
             }
 
             _settingsPath = Path.Combine(_dataDirectory, SettingsFileName);
+
+            _profileDirectory = profileDirectory ?? _dataDirectory;
+            EnsureProfileDirectory();
+        }
+
+        /// <summary>
+        /// Re-points this service at another profile's directory. WL-148.
+        /// </summary>
+        /// <remarks>
+        /// Only <see cref="ProfileService.SwitchToAsync"/> calls this, and only with the app
+        /// quiesced. The root settings.json does not move - it is device-scoped - so only the
+        /// database path and profile.json follow.
+        /// </remarks>
+        public void UseProfile(string profileDirectory)
+        {
+            _profileDirectory = profileDirectory;
+            EnsureProfileDirectory();
+        }
+
+        private void EnsureProfileDirectory()
+        {
+            try
+            {
+                if (!Directory.Exists(_profileDirectory))
+                    Directory.CreateDirectory(_profileDirectory);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to create profile directory: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -195,7 +263,13 @@ namespace WorkLedger_Client.Services
 
         public string SettingsPath => _settingsPath;
 
-        public string DatabasePath => Path.Combine(_dataDirectory, DefaultDbFileName);
+        // WL-148: the active profile's directory, which is the data directory itself in the
+        // single-profile layout.
+        public string ProfileDirectory => _profileDirectory;
+
+        public string DatabasePath => Path.Combine(_profileDirectory, DefaultDbFileName);
+
+        public string ProfileSettingsPath => Path.Combine(_profileDirectory, ProfileSettingsFileName);
 
         public AppSettings LoadSettings()
         {
@@ -209,6 +283,10 @@ namespace WorkLedger_Client.Services
                         ApplicationVersion = AppSettings.CurrentApplicationVersion,
                         DeviceId = Guid.NewGuid().ToString()
                     };
+                    // Overlaid BEFORE the save: a profile.json can outlive the root settings.json
+                    // (a deleted settings file, a restore that carried only the profile), and a
+                    // save that ran first would overwrite the session with blanks.
+                    ApplyProfileSettings(defaults);
                     SaveSettings(defaults);
                     return defaults;
                 }
@@ -217,6 +295,12 @@ namespace WorkLedger_Client.Services
                 var options = new JsonSerializerOptions();
                 options.Converters.Add(new JsonStringEnumConverter());
                 var settings = JsonSerializer.Deserialize<AppSettings>(json, options) ?? new AppSettings();
+
+                // WL-148: the profile-scoped half, read straight after the root and BEFORE any of
+                // the backfills below. Every one of those ends in a SaveSettings, which writes
+                // profile.json too - so overlaying afterwards would mean each backfill blanked the
+                // token and the cursor on its way past.
+                ApplyProfileSettings(settings);
 
                 // Backfill missing data directory and version for older settings files
                 if (string.IsNullOrWhiteSpace(settings.DataDirectory))
@@ -274,28 +358,79 @@ namespace WorkLedger_Client.Services
                     SaveSettings(settings);
                 }
 
-                if (string.IsNullOrWhiteSpace(settings.ApiToken))
-                {
-                    settings.ApiToken = string.Empty;
-                    SaveSettings(settings);
-                }
-
-                // WL-135. New in the login cutover, so every settings.json written before it
-                // lacks the key entirely.
-                if (string.IsNullOrWhiteSpace(settings.ApiEmail))
-                {
-                    settings.ApiEmail = string.Empty;
-                    SaveSettings(settings);
-                }
-
+                // WL-148: ApiToken, ApiTokenExpiresAtUtc, ApiEmail and LastSyncedAtUtc used to be
+                // backfilled here. They are no longer in this file at all - they belong to the
+                // profile, and were overlaid from profile.json above.
                 return settings;
             }
             catch (Exception)
             {
-                return new AppSettings
+                var fallback = new AppSettings
                 {
                     DataDirectory = _dataDirectory
                 };
+
+                ApplyProfileSettings(fallback);
+                return fallback;
+            }
+        }
+
+        // WL-148. Reads the profile-scoped half over whatever the root settings.json produced.
+        // A missing profile.json is the ordinary state of a profile nobody has signed in to, so it
+        // leaves the (empty) initializer values alone rather than being treated as an error.
+        private void ApplyProfileSettings(AppSettings settings)
+        {
+            var profile = LoadProfileSettings();
+
+            settings.ApiEmail = profile.ApiEmail ?? string.Empty;
+            settings.ApiToken = profile.ApiToken ?? string.Empty;
+            settings.ApiTokenExpiresAtUtc = profile.ApiTokenExpiresAtUtc;
+            settings.LastSyncedAtUtc = profile.LastSyncedAtUtc;
+        }
+
+        /// <summary>
+        /// The account-scoped settings of the profile this service is pointed at. WL-148.
+        /// </summary>
+        /// <remarks>
+        /// Internal rather than private because <see cref="ProfileService"/> reads and writes other
+        /// profiles' files - notably to hand a token back to the profile being left behind during a
+        /// switch - without re-pointing this service at them.
+        /// </remarks>
+        internal ProfileSettings LoadProfileSettings() => ReadProfileSettings(ProfileSettingsPath);
+
+        internal static ProfileSettings ReadProfileSettings(string path)
+        {
+            try
+            {
+                if (!File.Exists(path))
+                    return new ProfileSettings();
+
+                var options = new JsonSerializerOptions();
+                options.Converters.Add(new JsonStringEnumConverter());
+                return JsonSerializer.Deserialize<ProfileSettings>(File.ReadAllText(path), options)
+                       ?? new ProfileSettings();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to read profile settings: {ex.Message}");
+                return new ProfileSettings();
+            }
+        }
+
+        internal static void WriteProfileSettings(string path, ProfileSettings profile)
+        {
+            try
+            {
+                var directory = Path.GetDirectoryName(path);
+                if (!string.IsNullOrWhiteSpace(directory) && !Directory.Exists(directory))
+                    Directory.CreateDirectory(directory);
+
+                var options = new JsonSerializerOptions { WriteIndented = true };
+                File.WriteAllText(path, JsonSerializer.Serialize(profile, options));
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to write profile settings: {ex.Message}");
             }
         }
 
@@ -329,6 +464,16 @@ namespace WorkLedger_Client.Services
                 options.Converters.Add(new JsonStringEnumConverter());
                 var json = JsonSerializer.Serialize(settings, options);
                 File.WriteAllText(_settingsPath, json);
+
+                // WL-148: one save, two files. The four account-scoped fields are [JsonIgnore]d
+                // out of the serialization above, so this is the only thing that persists them.
+                WriteProfileSettings(ProfileSettingsPath, new ProfileSettings
+                {
+                    ApiEmail = settings.ApiEmail,
+                    ApiToken = settings.ApiToken,
+                    ApiTokenExpiresAtUtc = settings.ApiTokenExpiresAtUtc,
+                    LastSyncedAtUtc = settings.LastSyncedAtUtc
+                });
             }
             catch (Exception ex)
             {
@@ -366,7 +511,8 @@ namespace WorkLedger_Client.Services
                     success = false;
                 }
 
-                // Copy database
+                // Copy database. WL-148: the ACTIVE profile's, and the only one - a backup covers
+                // the profile you are working in, which is what the UI says it does.
                 try
                 {
                     var srcDb = DatabasePath;
@@ -376,6 +522,25 @@ namespace WorkLedger_Client.Services
                 catch (Exception ex)
                 {
                     System.Diagnostics.Debug.WriteLine($"Failed to backup database: {ex.Message}");
+                    success = false;
+                }
+
+                // Copy the profile's account-scoped settings alongside it, so a restored database
+                // arrives with the session that belongs to it rather than next to a blank one.
+                // Optional on both sides: a profile nobody has signed in to has no such file, and
+                // a backup taken before WL-148 does not contain one.
+                try
+                {
+                    if (File.Exists(ProfileSettingsPath))
+                    {
+                        await TryCopyFileWithRetriesAsync(
+                            ProfileSettingsPath,
+                            Path.Combine(destinationDirectory, ProfileSettingsFileName));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Failed to backup profile settings: {ex.Message}");
                     success = false;
                 }
 
@@ -474,6 +639,20 @@ namespace WorkLedger_Client.Services
                 var srcDb = Path.Combine(sourceDirectory, DefaultDbFileName);
                 var destDb = DatabasePath;
                 await TryCopyFileWithRetriesAsync(srcDb, destDb);
+
+                // WL-148: restoring into the ACTIVE profile, profile.json included when the backup
+                // has one. If the restored database belongs to a different account, WL-138's stamp
+                // travelled with it and ProfileService reconciles the registry entry from the stamp
+                // the next time the profile is opened - the stamp is authoritative, the registry
+                // entry is advisory.
+                var srcProfile = Path.Combine(sourceDirectory, ProfileSettingsFileName);
+                if (File.Exists(srcProfile))
+                {
+                    if (File.Exists(ProfileSettingsPath))
+                        File.Copy(ProfileSettingsPath, ProfileSettingsPath + $".backup_{timestamp}", overwrite: true);
+
+                    await TryCopyFileWithRetriesAsync(srcProfile, ProfileSettingsPath);
+                }
 
                 return (true, string.Empty);
             }
@@ -579,7 +758,26 @@ namespace WorkLedger_Client.Services
                     migratedAny = true;
                 }
 
-                // Migrate database
+                // Migrate every profile: profiles.json and the whole profiles/ tree. WL-148 -
+                // the data directory holds ALL of this install's profiles, so moving it moves all
+                // of them. Anything else would leave one account's work behind at the old path
+                // with nothing pointing at it.
+                var oldRegistry = Path.Combine(oldDir, ProfileService.RegistryFileName);
+                if (File.Exists(oldRegistry))
+                {
+                    File.Copy(oldRegistry, Path.Combine(newDataDirectory, ProfileService.RegistryFileName), overwrite: true);
+                    migratedAny = true;
+                }
+
+                var oldProfiles = Path.Combine(oldDir, ProfileService.ProfilesFolderName);
+                if (Directory.Exists(oldProfiles))
+                {
+                    CopyDirectory(oldProfiles, Path.Combine(newDataDirectory, ProfileService.ProfilesFolderName));
+                    migratedAny = true;
+                }
+
+                // Migrate a pre-WL-148 root database, for the one launch where a data-directory
+                // move and the profile migration could race each other.
                 var oldDbPath = Path.Combine(oldDir, DefaultDbFileName);
                 var newDbPath = Path.Combine(newDataDirectory, DefaultDbFileName);
                 if (File.Exists(oldDbPath))
@@ -609,6 +807,17 @@ namespace WorkLedger_Client.Services
                 System.Diagnostics.Debug.WriteLine($"Failed to migrate data: {ex.Message}");
                 return false;
             }
+        }
+
+        private static void CopyDirectory(string source, string destination)
+        {
+            Directory.CreateDirectory(destination);
+
+            foreach (var file in Directory.GetFiles(source))
+                File.Copy(file, Path.Combine(destination, Path.GetFileName(file)), overwrite: true);
+
+            foreach (var directory in Directory.GetDirectories(source))
+                CopyDirectory(directory, Path.Combine(destination, Path.GetFileName(directory)));
         }
     }
 }

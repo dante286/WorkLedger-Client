@@ -27,7 +27,10 @@ namespace WorkLedger_Client.Services
             public const string Delete = "delete";
         }
 
-        private readonly SQLiteAsyncConnection _db;
+        // Not readonly: WL-148's profile switch re-opens this instance on another profile's
+        // database rather than constructing a new service, so that TimerService,
+        // MainWindowViewModel and TaskItemViewModel keep the reference they were given.
+        private SQLiteAsyncConnection _db;
 
         // Identifies which installation this instance is running as, stamped onto
         // every row this instance writes so the sync orchestrator (Plan 4) can tell
@@ -37,13 +40,35 @@ namespace WorkLedger_Client.Services
         // Fire-and-forget initialization is still kicked off from the constructor for
         // normal app startup, but the task is exposed so callers that need the schema
         // and migration backfill to be complete first (e.g. tests) can await it.
-        public Task Initialization { get; }
+        public Task Initialization { get; private set; }
 
         public LocalDbService(string dbPath, string? deviceId = null)
         {
             _db = new SQLiteAsyncConnection(dbPath);
             DeviceId = deviceId;
             Initialization = InitializeAsync();
+        }
+
+        /// <summary>
+        /// Re-opens this service on another profile's database. WL-148.
+        /// </summary>
+        /// <remarks>
+        /// <b>The caller must have quiesced the app first</b> - <c>ProfileService.SwitchToAsync</c>
+        /// stops the work timer and the sync tick before calling this. It closes a connection and
+        /// opens another; it is not a concurrency primitive, and it must not be made to look like
+        /// one by being called from anywhere that could still have a write in flight.
+        /// <para>
+        /// The new database is initialized the same way the constructor's is, so a profile created
+        /// moments ago gets its four tables and every backfill before the first read.
+        /// </para>
+        /// </remarks>
+        public async Task SwitchDatabaseAsync(string dbPath)
+        {
+            await _db.CloseAsync();
+
+            _db = new SQLiteAsyncConnection(dbPath);
+            Initialization = InitializeAsync();
+            await Initialization;
         }
 
         private async Task InitializeAsync()

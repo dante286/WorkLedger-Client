@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -25,7 +25,7 @@ namespace WorkLedger_Client.Services
     // straight into it; if the settings screen were mutating a different copy, whichever one
     // saved last would silently drop the other's fields (which is exactly how a device would
     // lose its DeviceId and start looking like a brand new install).
-    public class SyncCoordinator : IDisposable
+    public class SyncCoordinator : IDisposable, IProfileAware
     {
         private const string PreMergeBackupFolderName = "pre-merge-backups";
 
@@ -37,6 +37,12 @@ namespace WorkLedger_Client.Services
         private readonly SettingsService _settingsService;
         private readonly AppSettings _settings;
         private readonly SettingsSyncStore _syncStore;
+
+        // WL-148. Null when this install has no profile machinery - which is every test that
+        // constructs a coordinator directly, and is why the ownership REFUSAL below is still
+        // reachable and still tested. The guard is the invariant; profiles are the convenience
+        // built on top of it, and a coordinator without them behaves exactly as WL-138 left it.
+        private readonly ProfileService? _profiles;
 
         // One HttpClient for the life of the app. ApiSyncProvider takes it rather than
         // constructing its own precisely so a provider rebuilt on every settings change
@@ -94,7 +100,8 @@ namespace WorkLedger_Client.Services
             LocalDbService db,
             SettingsService settingsService,
             AppSettings settings,
-            HttpClient? httpClient = null)
+            HttpClient? httpClient = null,
+            ProfileService? profiles = null)
         {
             _db = db;
             _settingsService = settingsService;
@@ -102,6 +109,39 @@ namespace WorkLedger_Client.Services
             _syncStore = new SettingsSyncStore(settingsService, settings);
             _ownsHttpClient = httpClient is null;
             _http = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+            _profiles = profiles;
+        }
+
+        /// <summary>
+        /// WL-148: stops the sync tick before the database underneath it is swapped.
+        /// </summary>
+        public Task OnProfileChangingAsync()
+        {
+            _orchestrator?.StopSync();
+            return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// WL-148: rebuilds everything that belonged to the account just left.
+        /// </summary>
+        /// <remarks>
+        /// <b>Dropping the cached <c>ApiSyncProvider</c> is the load-bearing line.</b> It is keyed
+        /// by endpoint, and the endpoint does not change when the profile does - so without this,
+        /// the new account would inherit the previous one's 401 verdict, its capability cache and
+        /// its rejected credential, and a revocation belonging to somebody else would be reported
+        /// as this session's.
+        /// </remarks>
+        public Task OnProfileChangedAsync()
+        {
+            _apiProvider = null;
+            _apiProviderEndpoint = string.Empty;
+            _preMergeBackupTakenThisSession = false;
+            ResetSignInFailures();
+
+            _builtForConfiguration = string.Empty;
+            ApplyConfiguration();
+
+            return Task.CompletedTask;
         }
 
         // Re-raised from the orchestrator so a UI showing "last synced" updates after a
@@ -593,6 +633,15 @@ namespace WorkLedger_Client.Services
                 return (false, "Enter your password.");
 
             _credential = new ApiCredentials(email.Trim(), password);
+
+            // WL-148, and it has to be captured BEFORE the login. ApiSyncProvider writes the token
+            // it is issued straight into the live AppSettings through SettingsSyncStore - settings
+            // that, until any switch happens, still belong to the profile being signed in FROM. So
+            // the outgoing profile's own session is remembered here and handed back to it below.
+            var sessionBefore = new ProfileSession(
+                _settings.ApiEmail, _settings.ApiToken, _settings.ApiTokenExpiresAtUtc, _settings.LastSyncedAtUtc);
+            var profileBefore = _profiles?.ActiveProfile;
+
             try
             {
                 // WL-138 item 6d: a pre-S6 install being seen for the first time since the
@@ -632,18 +681,52 @@ namespace WorkLedger_Client.Services
                 // endpoint is the thing an EndpointChanged message has to name.
                 var previousOwner = await _db.GetDatabaseOwnerAsync();
                 var verdict = await _db.EvaluateOwnershipAsync(user.Id, user.Email, _settings.ApiEndpoint);
-                if (verdict == DatabaseOwnershipVerdict.DifferentAccount)
-                {
-                    // REFUSE - deliberately not "are you sure?". There is no confirmation wording
-                    // that makes irreversible commingling of two people's work a reasonable thing
-                    // to consent to in a modal, because the consequence is invisible at the moment
-                    // of consent and permanent afterwards.
-                    DiscardSession();
+
+                // WL-148: the issued token, before anything below can move the live settings to a
+                // different profile.
+                var issued = new ProfileSession(
+                    user.Email, _settings.ApiToken, _settings.ApiTokenExpiresAtUtc, _settings.LastSyncedAtUtc);
+
+                var switchedTo = await SwitchProfileForSignInAsync(verdict, user, profileBefore, sessionBefore);
+                if (switchedTo.Refused)
                     return (false, DescribeOwnershipRefusal(previousOwner, user.Email));
+
+                if (switchedTo.Profile is not null)
+                {
+                    // The live settings now belong to the profile we moved to, so the token this
+                    // sign-in earned has to be written into it. Its previous occupant's token went
+                    // back into its own profile.json inside the switch.
+                    _settings.ApiToken = issued.Token;
+                    _settings.ApiTokenExpiresAtUtc = issued.ExpiresAtUtc;
+
+                    // And start the provider over. Between the switch and the line above, this
+                    // endpoint's provider was briefly holding the profile we moved INTO with its
+                    // own older token; anything that asked it something in that window could have
+                    // recorded a 401 verdict, and a verdict outranks the token's own shape - so a
+                    // perfectly good session would report itself revoked.
+                    _apiProvider = null;
+                    _apiProviderEndpoint = string.Empty;
+
+                    // Re-read against the database we actually landed on. A profile's registry
+                    // entry is advisory and its stamp is authoritative, so the only honest way to
+                    // know what we are now looking at is to ask it again.
+                    previousOwner = await _db.GetDatabaseOwnerAsync();
+                    verdict = await _db.EvaluateOwnershipAsync(user.Id, user.Email, _settings.ApiEndpoint);
+
+                    if (verdict == DatabaseOwnershipVerdict.DifferentAccount)
+                    {
+                        DiscardSession();
+                        return (false, DescribeOwnershipRefusal(previousOwner, user.Email));
+                    }
                 }
 
                 var adopting = verdict == DatabaseOwnershipVerdict.Unclaimed;
                 await _db.ClaimDatabaseAsync(user.Id, user.Email, _settings.ApiEndpoint);
+
+                // WL-148: the registry's mirror of the stamp that was just written. Safe to call
+                // for a profile that already names this account - it re-records the same identity
+                // and touches LastUsedAtUtc.
+                _profiles?.AdoptActiveProfile(user.Id, user.Email, _settings.ApiEndpoint);
 
                 _settings.ApiEmail = user.Email;
 
@@ -664,6 +747,16 @@ namespace WorkLedger_Client.Services
 
                 var signedIn = $"Signed in as {user.Email}.";
 
+                // WL-148: a switch is the one outcome the user has to be told about, because the
+                // projects list on screen changed underneath them and the reason is not obvious.
+                if (switchedTo.Profile is not null)
+                {
+                    return (true, switchedTo.Created
+                        ? $"{signedIn} Started a fresh local database for this account - your other "
+                          + "account's work is untouched and still on this machine."
+                        : $"{signedIn} Switched to this account's own local data.");
+                }
+
                 // WL-138 item 6b: a moved server is warned about, not blocked. Saying which
                 // address it moved from is what lets the user notice if it was the wrong one.
                 return verdict == DatabaseOwnershipVerdict.EndpointChanged
@@ -681,6 +774,108 @@ namespace WorkLedger_Client.Services
                 // as on disk.
                 _credential = null;
             }
+        }
+
+        // The account-scoped half of AppSettings, carried across a profile switch. WL-148.
+        private readonly record struct ProfileSession(
+            string Email, string Token, DateTime? ExpiresAtUtc, DateTime? LastSyncedAtUtc);
+
+        // What the profile decision below concluded. Three outcomes, because they want three
+        // different things said: nothing at all, "you are now looking at another database", and
+        // WL-138's refusal.
+        private readonly record struct SignInProfileOutcome(Profile? Profile, bool Created, bool Refused)
+        {
+            public static SignInProfileOutcome StayedPut => new(null, false, false);
+
+            public static SignInProfileOutcome Refuse() => new(null, false, true);
+        }
+
+        /// <summary>
+        /// WL-148: gives the account that just signed in its own local database, switching to it if
+        /// that isn't the one currently open.
+        /// </summary>
+        /// <remarks>
+        /// Four cases, and the order between the middle two is the whole point:
+        /// <list type="number">
+        /// <item>the open database is already stamped for this account - stay;</item>
+        /// <item>a profile is <b>already registered</b> for this account - switch to it. Ahead of
+        /// adoption deliberately, because an account that ended up with two profiles would have its
+        /// work split across two databases with no way to tell which half is which;</item>
+        /// <item>the open database is unclaimed and its profile belongs to nobody - <b>adopt it in
+        /// place</b>, with no prompt whatsoever. This is WL-138's offline-first path and it must
+        /// stay frictionless: a week of work with no server, then a sign-in, and everything is
+        /// simply kept;</item>
+        /// <item>otherwise - create a profile for this account and switch to it.</item>
+        /// </list>
+        /// <para>
+        /// If the switch cannot be made, the sign-in is <b>refused</b>, exactly as it was before
+        /// profiles existed. The guard is the invariant and this is the convenience built on top of
+        /// it; a convenience that fails must not be able to cost anyone their data.
+        /// </para>
+        /// </remarks>
+        private async Task<SignInProfileOutcome> SwitchProfileForSignInAsync(
+            DatabaseOwnershipVerdict verdict, UserSummary user, Profile? profileBefore, ProfileSession sessionBefore)
+        {
+            if (verdict is DatabaseOwnershipVerdict.SameAccount or DatabaseOwnershipVerdict.EndpointChanged)
+                return SignInProfileOutcome.StayedPut;
+
+            if (_profiles is null || profileBefore is null)
+            {
+                if (verdict != DatabaseOwnershipVerdict.DifferentAccount)
+                    return SignInProfileOutcome.StayedPut;
+
+                // WL-138 verbatim, and deliberately not "are you sure?". There is no confirmation
+                // wording that makes irreversible commingling of two people's work a reasonable
+                // thing to consent to in a modal, because the consequence is invisible at the
+                // moment of consent and permanent afterwards.
+                DiscardSession();
+                return SignInProfileOutcome.Refuse();
+            }
+
+            var existing = _profiles.FindForAccount(user.Id, user.Email);
+            var sameProfile = existing is not null
+                && string.Equals(existing.Id, profileBefore.Id, StringComparison.OrdinalIgnoreCase);
+
+            Profile target;
+            bool created;
+
+            if (existing is not null && !sameProfile)
+            {
+                target = existing;
+                created = false;
+            }
+            else if (verdict == DatabaseOwnershipVerdict.Unclaimed && !profileBefore.HasIdentity)
+            {
+                return SignInProfileOutcome.StayedPut;
+            }
+            else
+            {
+                created = existing is null;
+                target = _profiles.EnsureProfileForAccount(user.Id, user.Email, _settings.ApiEndpoint);
+            }
+
+            // Put the outgoing profile's own session back into the live settings BEFORE switching.
+            // The switch persists them into that profile's profile.json on its way out, so this is
+            // what stops the token this sign-in just earned from being filed under the account
+            // being left behind - and it means a switch back needs no password.
+            RestoreSession(sessionBefore);
+
+            var switched = await _profiles.SwitchToAsync(target.Id);
+            if (switched.Success)
+                return new SignInProfileOutcome(target, created, false);
+
+            // Nothing to undo: the live settings are already the outgoing profile's, and the
+            // database was never closed.
+            return SignInProfileOutcome.Refuse();
+        }
+
+        private void RestoreSession(ProfileSession session)
+        {
+            _settings.ApiEmail = session.Email;
+            _settings.ApiToken = session.Token;
+            _settings.ApiTokenExpiresAtUtc = session.ExpiresAtUtc;
+            _settings.LastSyncedAtUtc = session.LastSyncedAtUtc;
+            _settingsService.SaveSettings(_settings);
         }
 
         /// <summary>
@@ -867,7 +1062,11 @@ namespace WorkLedger_Client.Services
             // sitting there with an automatic one the user never asked for. Timestamped
             // subfolders instead, pruned below, so a bad merge doesn't immediately overwrite
             // the snapshot taken before the merge that caused it.
-            var root = Path.Combine(_settingsService.DataDirectory, PreMergeBackupFolderName);
+            // WL-148: under the ACTIVE PROFILE's directory rather than the data directory, so one
+            // account's five snapshots cannot evict another's - PruneOldPreMergeBackups keeps the
+            // newest five of whatever it finds, and a shared root would let a busy profile quietly
+            // discard the only pre-merge copy another one ever took.
+            var root = Path.Combine(_settingsService.ProfileDirectory, PreMergeBackupFolderName);
             var destination = Path.Combine(root, DateTime.UtcNow.ToString("yyyyMMdd_HHmmss"));
 
             if (await _settingsService.CreateBackupAsync(destination))

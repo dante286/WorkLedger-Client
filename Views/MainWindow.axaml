@@ -613,6 +613,40 @@
                         <TextBlock Width="160" VerticalAlignment="Center" Text="{Binding ApplicationVersion}" />
                     </StackPanel>
 
+                    <!-- Profiles (WL-148).
+
+                         One complete local database per signed-in account. The switcher only
+                         appears once there is more than one, so the overwhelmingly common
+                         single-account install never has to think about profiles at all - but the
+                         active profile is always named, because backup, restore and the Reports tab
+                         all act on it and "which database am I looking at" must never be a guess. -->
+                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Active profile</TextBlock>
+                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextPrimary}" Text="{Binding ActiveProfileName}" />
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center"
+                                IsVisible="{Binding HasMultipleProfiles}">
+                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Switch to</TextBlock>
+                        <ComboBox Width="260" ItemsSource="{Binding Profiles}" SelectedItem="{Binding SelectedProfile, Mode=TwoWay}">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding DisplayName}" />
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                        <Button Margin="8,0,0,0" Command="{Binding SwitchProfileCommand}" IsEnabled="{Binding !IsSwitchingProfile}"
+                                Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
+                                FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
+                                VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
+                            <TextBlock Text="Switch" />
+                        </Button>
+                    </StackPanel>
+
+                    <TextBlock IsVisible="{Binding HasMultipleProfiles}" TextWrapping="Wrap" MaxWidth="560"
+                               HorizontalAlignment="Left" FontSize="12" Foreground="{DynamicResource TextTertiary}"
+                               Text="Each account keeps its own projects, tasks and entries on this machine. Switching changes what the Projects and Reports tabs show, and what a backup covers. Nothing is deleted or merged." />
+
                     <!-- Backup Settings -->
                     <TextBlock Foreground="{DynamicResource TextPrimary}" FontWeight="600" FontSize="14" Margin="0,8,0,0">Backup</TextBlock>
 

@@ -89,7 +89,7 @@ No backend is needed to run the app — it is fully functional standalone.
 
 ### Where your data lives
 
-On first run the app creates `settings.json` and `workledger.db` in a platform data directory:
+On first run the app creates a data directory for this machine:
 
 | Platform | Default location |
 |---|---|
@@ -97,9 +97,30 @@ On first run the app creates `settings.json` and `workledger.db` in a platform d
 | macOS | `~/Library/Application Support/WorkLedger` |
 | Linux | `$XDG_CONFIG_HOME/WorkLedger`, or `~/.config/WorkLedger` |
 
-Settings → **Data Directory** moves both files somewhere else (a synced folder, an external drive) and
+Inside it, `settings.json` holds the settings belonging to this *install* — theme, backup and sync
+settings, and the device identity — and each signed‑in account gets its own complete database under
+`profiles/`:
+
+```
+<data directory>/
+ ├── settings.json          this install's settings
+ ├── profiles.json          which profiles exist, and which one is active
+ └── profiles/
+     ├── local/             the profile every install starts in
+     │    ├── workledger.db
+     │    └── profile.json  the signed-in account, its token and its sync cursor
+     └── <account>/         …one of these per account signed in on this machine
+```
+
+Signing in as a second account switches to (or creates) that account's profile, live — each one is a
+complete, standalone, fully functional offline database, and nothing is ever merged between them. With one
+account there is one profile and nothing to think about; with more, Settings → **Active profile** names the
+one you are in and switches between them. Upgrading an existing install moves its database into
+`profiles/local/` once, automatically.
+
+Settings → **Data Directory** moves the whole tree somewhere else (a synced folder, an external drive) and
 copies the existing data across immediately. Settings also configures a backup folder, a backup interval,
-backup‑on‑close, and restore‑from‑folder.
+backup‑on‑close, and restore‑from‑folder — all of which act on the **active profile's** database.
 
 ### Turning on sync
 
@@ -112,9 +133,9 @@ Sync is **off by default** — nothing leaves the machine until you choose a mod
 | **WorkLedger API** | A reachable [WorkLedger-API](https://github.com/dante286/WorkLedger-API) instance and an account on it | Enter your email and password and press **Sign in** once — the server issues a JWT scoped to this device and the client stores it. The password is used for that one call and is **never saved**; only the email is. This device is enrolled as a side effect of signing in. No account yet? If the server allows it, **Create an account** appears right there; on a server that already holds data from before user accounts existed, **Claim this server** takes ownership of it instead. Once signed in the same panel lists the devices on your account, changes your password, signs every device out, and — behind a deliberately awkward danger zone — deletes the account. |
 
 The **Sync Interval** setting drives a background tick (or `Manual only`, in which case *Sync Now* is the only
-trigger). **Backup Before Merge** takes a copy of `settings.json` and `workledger.db` into
-`<data directory>/pre-merge-backups/` before the first incoming change of a sync run overwrites or deletes
-anything local — `Once per session` by default, with the five most recent snapshots kept.
+trigger). **Backup Before Merge** takes a copy of the settings and the active profile's database into
+`<data directory>/profiles/<profile>/pre-merge-backups/` before the first incoming change of a sync run
+overwrites or deletes anything local — `Once per session` by default, with the five most recent snapshots kept.
 
 Queued changes are durable, so there is deliberately no sync-on-exit: closing the app never waits on the
 network, and anything still pending goes out on the next tick or launch.
@@ -123,24 +144,27 @@ network, and anything still pending goes out on the next tick or launch.
 
 ```
 WorkLedger-Client/
- ├── Models/            Project, TaskItem, TimeEntry, SyncQueue (+ IVersionedEntity)
- ├── ViewModels/        MainWindowViewModel (+ .Sync / .Reports partials), TaskItemViewModel
+ ├── Models/            Project, TaskItem, TimeEntry, SyncQueue (+ IVersionedEntity),
+ │                      DatabaseOwner, Profile
+ ├── ViewModels/        MainWindowViewModel (+ .Sync / .Reports / .Profiles partials),
+ │                      TaskItemViewModel
  ├── Views/             Avalonia XAML: MainWindow, dialogs, ToastWindow
- ├── Services/          LocalDbService, SettingsService, TimerService, AppStateService,
- │                      SyncOrchestrator, SyncCoordinator, ReportsService, ThemeService,
- │                      ToastService
+ ├── Services/          LocalDbService, SettingsService, ProfileService, TimerService,
+ │                      AppStateService, SyncOrchestrator, SyncCoordinator, ReportsService,
+ │                      ThemeService, ToastService
  ├── Sync/              ISyncProvider, FileSyncProvider, ApiSyncProvider, NullSyncProvider,
  │                      SyncResult/PullResult/RemoteChange, SyncStores
  │    └── Contracts/    Vendored copy of the server's WorkLedger.Contracts wire DTOs
  ├── Converters/        IValueConverters for XAML bindings
  ├── Assets/            Themes and fonts
  ├── Tests/             WorkLedger.Tests (xUnit)
- └── plans/             The sequenced build plans (01–07) and their index
+ └── plans/             The sequenced build plans (01–11) and their index
 ```
 
 ### Troubleshooting
 - **Build errors:** Ensure you have the .NET 10.0 SDK installed (`dotnet --version`)
-- **Database issues:** Delete `workledger.db` from the data directory above to reset local data
+- **Database issues:** Delete `profiles/<profile>/workledger.db` from the data directory above to reset that
+  profile's local data
 - **UI not loading:** Check that Avalonia packages restored cleanly
 
 ---

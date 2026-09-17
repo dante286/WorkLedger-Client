@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -32,9 +32,17 @@ namespace WorkLedger_Client
                 string dataDirectory = DiscoverDataDirectory();
                 System.Diagnostics.Debug.WriteLine($"Discovered data directory: {dataDirectory}");
 
+                // PHASE 1b: RESOLVE the active profile. WL-148 - constructed before
+                // SettingsService because it is what decides which profile directory that service
+                // is pointed at, and because its constructor performs the one-time migration of a
+                // pre-profiles install into profiles/local/. DiscoverDataDirectory above needs no
+                // second pass: DataDirectory is device-scoped and stays in the root settings.json.
+                var profileService = new ProfileService(dataDirectory);
+                System.Diagnostics.Debug.WriteLine($"Active profile: {profileService.ActiveProfile.Id}");
+
                 // PHASE 2: INITIALIZE SettingsService with the discovered directory
                 // This SINGLE initialization ensures all settings operations use the correct location
-                var settingsService = new SettingsService(dataDirectory);
+                var settingsService = new SettingsService(dataDirectory, profileService.ActiveProfileDirectory);
                 var appSettings = settingsService.LoadSettings();
                 System.Diagnostics.Debug.WriteLine($"Loaded settings from: {settingsService.SettingsPath}");
 
@@ -52,6 +60,18 @@ namespace WorkLedger_Client
                 var localDb = new LocalDbService(dbPath, appSettings.DeviceId);
                 var appState = new AppStateService();
                 var timerService = new TimerService(localDb, appState);
+
+                // WL-148: the profile service can now perform a live switch, and the registry entry
+                // for whatever database we just opened is corrected from that database's own
+                // ownership stamp - the stamp is authoritative, the entry is advisory, and a
+                // restored backup is exactly the case that makes them disagree.
+                profileService.Attach(settingsService, localDb, appSettings);
+                profileService.TouchActiveProfile();
+                _ = profileService.ReconcileActiveProfileAsync(localDb);
+
+                // Registration order is the quiesce order: the timer writes to the database, so it
+                // is stopped (and its entry saved) first.
+                profileService.Register(timerService);
 
                 // Initialize theme service with system detection
                 var themeService = new ThemeService(desktop);
@@ -74,12 +94,15 @@ namespace WorkLedger_Client
                 // coordinator's SettingsSyncStore writes the issued API token and the pull
                 // cursor into it, and a second copy would mean whichever saved last silently
                 // discarded the other's fields.
-                var syncCoordinator = new SyncCoordinator(localDb, settingsService, appSettings);
+                var syncCoordinator = new SyncCoordinator(
+                    localDb, settingsService, appSettings, httpClient: null, profiles: profileService);
+                profileService.Register(syncCoordinator);
                 syncCoordinator.ApplyConfiguration();
 
                 var mainViewModel = new MainWindowViewModel(
                     localDb, timerService, appState, themeService, settingsService, toastService,
-                    appSettings, syncCoordinator);
+                    appSettings, syncCoordinator, profileService);
+                profileService.Register(mainViewModel);
                 desktop.MainWindow = new MainWindow
                 {
                     DataContext = mainViewModel,
