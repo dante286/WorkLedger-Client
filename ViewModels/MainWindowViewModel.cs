@@ -83,6 +83,9 @@ namespace WorkLedger_Client.ViewModels
         private readonly SyncCoordinator _syncCoordinator;
         private readonly ReportsService _reportsService;
 
+        // WL-148. Null only where there is no profile machinery at all; the app always passes one.
+        private readonly ProfileService? _profileService;
+
         // WL-67/WL-95: the single live AppSettings instance, shared with SyncCoordinator and
         // through it with SettingsSyncStore. Every save mutates and re-persists *this* object
         // rather than building a fresh AppSettings from the bound properties: the settings
@@ -137,7 +140,8 @@ namespace WorkLedger_Client.ViewModels
             SettingsService settingsService,
             ToastService toastService,
             AppSettings settings,
-            SyncCoordinator syncCoordinator)
+            SyncCoordinator syncCoordinator,
+            ProfileService? profileService = null)
         {
             _localDbService = localDbService;
             _timerService = timerService;
@@ -149,6 +153,7 @@ namespace WorkLedger_Client.ViewModels
             _toastService = toastService;
             _settings = settings;
             _syncCoordinator = syncCoordinator;
+            _profileService = profileService;
             _reportsService = new ReportsService(localDbService);
 
             SelectedTheme = string.IsNullOrWhiteSpace(settings.Theme) ? "System" : settings.Theme;
@@ -168,6 +173,7 @@ namespace WorkLedger_Client.ViewModels
                 : settings.ApplicationVersion;
 
             RefreshSyncStatus();
+            RefreshProfiles();
 
             // WL-146: probe what the server allows so the panel is already correct the first time
             // it is opened. Fire-and-forget on purpose - the app must start without waiting on a
@@ -194,7 +200,14 @@ namespace WorkLedger_Client.ViewModels
                     // and the on-close call site only fires when BackupOnClose is set.
                     if (string.IsNullOrWhiteSpace(BackupDirectory)) return;
                     var ok = await _settingsService.CreateBackupAsync(BackupDirectory);
-                    _toastService?.ShowToast(ok ? "Backup saved" : "Backup failed", 1400);
+
+                    // WL-148: a backup covers the ACTIVE profile's database, so it says which one.
+                    // With a single profile this reads exactly as it always has.
+                    var covered = _profileService is { } profiles && profiles.Profiles.Count > 1
+                        ? $" ({profiles.ActiveProfile.DisplayName})"
+                        : string.Empty;
+
+                    _toastService?.ShowToast(ok ? $"Backup saved{covered}" : "Backup failed", 1400);
                 }
                 catch (Exception ex)
                 {
@@ -907,10 +920,19 @@ namespace WorkLedger_Client.ViewModels
                     return;
                 }
 
+                // WL-148: a restore replaces the ACTIVE profile's database, so it says which one.
+                // If the restored database belongs to a different account, WL-138's stamp travelled
+                // with it and ProfileService re-labels this profile from that stamp on the next
+                // launch - the stamp is authoritative, the registry entry is advisory.
+                var into = _profileService is { } profiles && profiles.Profiles.Count > 1
+                    ? $" into {profiles.ActiveProfile.DisplayName}"
+                    : string.Empty;
+
                 var (success, error) = await _settingsService.RestoreFromDirectoryAsync(path);
                 if (success)
                 {
-                    _toastService?.ShowToast("Restore completed. Restart the app to load restored data.", 3500);
+                    _toastService?.ShowToast(
+                        $"Restore completed{into}. Restart the app to load restored data.", 3500);
                     return;
                 }
 

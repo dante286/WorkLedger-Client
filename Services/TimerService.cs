@@ -5,7 +5,7 @@ using WorkLedger_Client.Models;
 
 namespace WorkLedger_Client.Services
 {
-    public class TimerService
+    public class TimerService : IProfileAware
     {
         private readonly LocalDbService _db;
         private readonly AppStateService _state;
@@ -114,6 +114,24 @@ namespace WorkLedger_Client.Services
         }
 
         public bool IsRunning => _timer.Enabled;
+
+        /// <summary>
+        /// WL-148: stops and saves a running timer before the database underneath it is swapped.
+        /// </summary>
+        /// <remarks>
+        /// The entry is completed and written to the profile it was <i>recorded in</i>, which is
+        /// the only defensible place for it - a switch is not a reason to lose the last stretch of
+        /// tracked work, and it is certainly not a reason to attribute it to the account being
+        /// switched to. Registered first with <see cref="ProfileService"/> so this happens before
+        /// anything else lets go of the old database.
+        /// </remarks>
+        public async Task OnProfileChangingAsync() => await StopTimerAsync();
+
+        /// <summary>
+        /// Nothing to resume: the new profile's timer state is whatever its own database says, and
+        /// this service holds none of its own between runs.
+        /// </summary>
+        public Task OnProfileChangedAsync() => Task.CompletedTask;
 
         /// <summary>
         /// Configure backup interval. If interval is Disabled or OnClose, the backup timer is stopped.

@@ -3,6 +3,7 @@
 Plans **1–7** are derived from [`WorkLedger_MVP_Plan.md`](../WorkLedger_MVP_Plan.md) (the M0–M7 overview) and
 have all merged, cutting **v0.1.0**. Plans **8–10** are the client half of the server's user-accounts release
 (`WorkLedger-API` plans S6–S9), and **all three have merged** — see "The user-accounts release" below.
+Plan **11** is that release's deferred follow-up: per-account profiles, client-only, no server counterpart.
 
 Each file in this folder is a **self-contained** plan meant to be handed to a Claude Code session as its own
 unit of work — its own branch, its own PR, its own review. M7 (Release) is small enough that it's folded into
@@ -27,6 +28,7 @@ the M6 plan rather than getting its own file, so plans 1–7 cover the 8 origina
 | 8 | [08-user-accounts-login-cutover.md](08-user-accounts-login-cutover.md) | [WL-133](https://mnisan.atlassian.net/browse/WL-133), [WL-134](https://mnisan.atlassian.net/browse/WL-134), [WL-135](https://mnisan.atlassian.net/browse/WL-135), [WL-137](https://mnisan.atlassian.net/browse/WL-137), [WL-138](https://mnisan.atlassian.net/browse/WL-138), [WL-145](https://mnisan.atlassian.net/browse/WL-145) | 6, 7, **API S9** | merged |
 | 9 | [09-auth-capabilities-and-account-ui.md](09-auth-capabilities-and-account-ui.md) | [WL-146](https://mnisan.atlassian.net/browse/WL-146) | 8 | merged |
 | 10 | [10-account-management.md](10-account-management.md) | [WL-139](https://mnisan.atlassian.net/browse/WL-139) (WL-140…WL-144) | 8, 9, **API S8** | merged |
+| 11 | [11-per-account-profiles.md](11-per-account-profiles.md) | [WL-148](https://mnisan.atlassian.net/browse/WL-148) | 8, 9, 10 | in progress |
 
 ## Sequencing
 
@@ -53,6 +55,8 @@ the M6 plan rather than getting its own file, so plans 1–7 cover the 8 origina
 - **WL-136 spans plans 8 and 9**, so it carries a subtask for each: WL-145 (the plain sign-in row, plan 8) and
   WL-146 (the capability-driven registration/claim/revocation-routing, plan 9). Close the subtasks, not the
   parent, until both have landed.
+- **11 comes after all three**, and after nothing else — it needs WL-138's ownership guard to exist before it
+  can replace the remedy that guard points at, and it touches no server contract at all.
 
 ## The user-accounts release
 
@@ -106,8 +110,10 @@ Two alternatives are ruled out in writing there so they don't resurface: **archi
 (what most apps do, and it inverts offline-first — empty app until a successful pull, nothing at all if the
 server is unreachable), and a **`UserId` column on every entity** (buys a cross-account local view nobody asked
 for, pays with a migration across the orchestrator's merge lookups). Per-account profiles —
-[WL-148](https://mnisan.atlassian.net/browse/WL-148) — are the wanted-case follow-up and deliberately not in
-this release.
+[WL-148](https://mnisan.atlassian.net/browse/WL-148) — were the wanted-case follow-up, deliberately not in
+this release, and are now [Plan 11](11-per-account-profiles.md): one complete database per account under
+`<dataDir>/profiles/`, switched to live on sign-in, with WL-138's refusal kept as the fallback for a switch
+that cannot be made. The guard stays the invariant; the profile is the convenience built on top of it.
 
 ## Cross-repo: the server
 
