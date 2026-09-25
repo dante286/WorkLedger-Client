@@ -1,5 +1,11 @@
 # Plan 9 — Registration, claim, and a capability-aware auth UI
 
+> **Partly superseded (2026-09-25).** Registration and claim (the account-creation half of this plan) are
+> removed from the client by
+> [plan 12](12-account-lifecycle-to-web-portal.md) and now live in the server's web portal
+> (`WorkLedger-API/plans/S11-web-portal.md`). The capability probe, the sign-in states and the
+> lockout-aware panel stay. This file remains the design record of what shipped.
+
 **Ticket:** [WL-146](https://mnisan.atlassian.net/browse/WL-146), the second subtask of
 [WL-136](https://mnisan.atlassian.net/browse/WL-136), under epic
 [WL-105](https://mnisan.atlassian.net/browse/WL-105). Plan 8 lands WL-136's other subtask

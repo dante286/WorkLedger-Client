@@ -4,8 +4,8 @@ Plans **1–7** are derived from [`WorkLedger_MVP_Plan.md`](../WorkLedger_MVP_Pl
 have all merged, cutting **v0.1.0**. Plans **8–10** are the client half of the server's user-accounts release
 (`WorkLedger-API` plans S6–S9), and **all three have merged** — see "The user-accounts release" below.
 Plan **11** is that release's deferred follow-up: per-account profiles, client-only, no server counterpart.
-Plan **12** is the client half of the server's **S10** (invites and password reset) — additive, unlike the
-S6–S9 cutover.
+Plan **12** is the client half of the server's **S10** and **S11**: the account lifecycle moves out of this
+client and into the server's web portal (rewritten 2026-09-25; it originally added invite and reset UI here).
 
 Each file in this folder is a **self-contained** plan meant to be handed to a Claude Code session as its own
 unit of work — its own branch, its own PR, its own review. M7 (Release) is small enough that it's folded into
@@ -31,7 +31,7 @@ the M6 plan rather than getting its own file, so plans 1–7 cover the 8 origina
 | 9 | [09-auth-capabilities-and-account-ui.md](09-auth-capabilities-and-account-ui.md) | [WL-146](https://mnisan.atlassian.net/browse/WL-146) | 8 | merged |
 | 10 | [10-account-management.md](10-account-management.md) | [WL-139](https://mnisan.atlassian.net/browse/WL-139) (WL-140…WL-144) | 8, 9, **API S8** | merged |
 | 11 | [11-per-account-profiles.md](11-per-account-profiles.md) | [WL-148](https://mnisan.atlassian.net/browse/WL-148) | 8, 9, 10 | merged |
-| 12 | [12-invites-and-password-reset.md](12-invites-and-password-reset.md) | [WL-173](https://mnisan.atlassian.net/browse/WL-173) (WL-174…WL-177) | 8, 9, 10, 11, **API S10** | not started |
+| 12 | [12-account-lifecycle-to-web-portal.md](12-account-lifecycle-to-web-portal.md) | [WL-173](https://mnisan.atlassian.net/browse/WL-173) (WL-174…WL-177, re-scoped) | 8, 9, 10, 11, **API S11** | not started (rewritten) |
 
 ## Sequencing
 
@@ -61,19 +61,24 @@ the M6 plan rather than getting its own file, so plans 1–7 cover the 8 origina
 - **11 comes after all three**, and after nothing else — it needs WL-138's ownership guard to exist before it
   can replace the remedy that guard points at, and it touches no server contract at all.
 
-### Plan 12 (the S10 follow-on)
+### Plan 12 (the web-portal direction)
 
-- **12 follows 11**, and through it 8–10 — the same files again, so still nothing to parallelise. It also
-  depends on the server's **S10**, which has merged; its handoff is
-  `WorkLedger-API/plans/S10-client-handoff.md`.
-- **12 is not a cutover, and that is the point.** Unlike 8, every S10 contract change is additive and the
-  client compiles unchanged after the re-vendor, so WL-174's re-vendor is a standalone green commit rather
-  than something that has to be put back together in the same PR.
-- **Read 11 before 12's items 6–8.** WL-148 reworked `SignInAsync` around profile switching, and 12's
-  password-reset path has to borrow `OnProfileChangedAsync`'s provider drop without becoming a profile event.
-- **The `/admin/*` surface is deliberately not a plan.** `AdminDtos.cs` is vendored so it stays possible;
-  whether this client ever grows an operator tab is filed as
-  [WL-178](https://mnisan.atlassian.net/browse/WL-178).
+- **Direction, decided 2026-09-25:** this client is the user's time-tracking tool and signs in to a server
+  with an existing account — nothing more. Registration, claim, password change and reset, device management,
+  sign-out-everywhere, account deletion and every operator action live in the server's web portal
+  (`WorkLedger-API/plans/S11-web-portal.md`). The client stays fully usable with no server at all.
+- **12 follows 11**, and through it 8–10 — the same files again. It is **blocked on the server's S11**, whose
+  handoff (`WorkLedger-API/plans/S11-client-handoff.md`, written by S11 group F) is authoritative for the
+  re-vendor. It should not ship before a server with the portal is available to its users, because it removes
+  the client's only registration path.
+- **12 is mostly deletion, and it is not a wire break.** It removes plans 9 and 10's account surface; the
+  server keeps every JSON route those plans call as a compatibility route, so older builds keep working. What
+  it adds is small: portal links from `AuthCapabilitiesResponse.PortalUrl`, an "I've reset my password"
+  escape from a stale lockout verdict, and "Detach from account" to replace WL-143's automatic release.
+- **The original plan 12** (invite token at registration, reset redemption in the app — commit `2c6e1da`) was
+  never started and is superseded; its stale-verdict finding carries over as item 6.
+- **There is no operator surface in this client, by design.** [WL-178](https://mnisan.atlassian.net/browse/WL-178)
+  is closed as won't do; the portal is the operator UI.
 
 ## The user-accounts release
 

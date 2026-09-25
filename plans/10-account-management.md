@@ -1,5 +1,10 @@
 # Plan 10 — Account management: devices, password, sign-out-everywhere, account deletion
 
+> **Superseded (2026-09-25).** Everything this plan built (devices, change password, sign out everywhere,
+> delete account) is removed from the client by
+> [plan 12](12-account-lifecycle-to-web-portal.md) and now lives in the server's web portal
+> (`WorkLedger-API/plans/S11-web-portal.md`). This file remains the design record of what shipped.
+
 **Tickets:** [WL-139](https://mnisan.atlassian.net/browse/WL-139), under epic
 [WL-105](https://mnisan.atlassian.net/browse/WL-105). Filed 2026-08-26 — nothing in the epic had owned this
 work: WL-136 noted the device list and change-password only as "worth considering in the same pass", and
