@@ -2,12 +2,35 @@
 
 These files are **copies**, not originals. The source of truth is
 [`WorkLedger-API`](https://github.com/dante286/WorkLedger-API), at
-`src/WorkLedger.Contracts/`, as of commit **`3d27c86`** (the last commit to touch that project;
-repo `main` was at `08f02f0`).
+`src/WorkLedger.Contracts/`, as of commit **`eb743d4`** (the last commit to touch that project;
+repo `main` was at `414f451`).
 
-Re-vendored 2026-09-15 from the previous pin (`2065662`) — WL-133, the client half of the server's
-S6–S8 user-accounts work (see `WorkLedger-API/plans/S9-client-handoff.md`, which is authoritative for
-this cutover). **Everything under `Sync/` and `Payloads/` came through untouched** — verified
+Re-vendored 2026-09-30 from the previous pin (`3d27c86`) — WL-174, the client half of the server's
+S10 and S11 work (see `WorkLedger-API/plans/S11-client-handoff.md`, which is authoritative for this
+re-vendor). The client never re-vendored at S10's `1e343c8`, so this one pass picks up both. The
+entire difference is **three trailing, defaulted parameters** in `AuthDtos.cs`, plus XML doc text:
+
+| Record | Parameter | From | Default |
+|---|---|---|---|
+| `RegisterUserRequest` | 4th: `string? InviteToken` | S10 | `null` |
+| `AuthCapabilitiesResponse` | 7th: `bool RegistrationAcceptsInvite` | S10 | `false` |
+| `AuthCapabilitiesResponse` | 8th: `string? PortalUrl` | S11 | `null` |
+
+No record was added, removed, renamed or reordered, so every existing call site compiles unchanged.
+S10's admin records (`AdminDtos.cs`) and `ResetPasswordRequest` are **not** here: S11 moved them out of
+`WorkLedger.Contracts` into the server, under the rule that the library holds only what the desktop
+client speaks. The client never compiled against them, so their absence is not a removal.
+**`Sync/` and `Payloads/` are byte-identical** to the previous pin — `git diff 3d27c86 eb743d4 --
+src/WorkLedger.Contracts/Sync src/WorkLedger.Contracts/Payloads src/WorkLedger.Contracts/Reports` is
+empty, as is the same diff from `1e343c8`. Only the provenance headers moved.
+
+`PortalUrl` is the absolute address of the server's web portal, or `null` for a pre-S11 server or one
+with the portal switched off. It is built from the operator's configured public address, never from
+the request, so the client opens it as given and never derives one from `ApiEndpoint`.
+
+Before that, WL-133 re-vendored `3d27c86` on 2026-09-15 from `2065662` — the client half of the
+server's S6–S8 user-accounts work (see `WorkLedger-API/plans/S9-client-handoff.md`, which is
+authoritative for that cutover). **Everything under `Sync/` and `Payloads/` came through untouched** — verified
 file-by-file, the sole difference being one XML doc word in `SyncConstants.cs` (`(AccountId, SyncId)` →
 `(UserId, SyncId)`). The push/pull shapes, `SyncJson.Options`' PascalCase policy, the positional
 `SyncPushResponse.Results` and `SyncItemResult.AuthoritativeOperation` are all exactly what they were.
@@ -38,7 +61,7 @@ was rejected — this repo's CI checks out only this repo, so it would build loc
 
 ## How a token is obtained, and how it dies
 
-`AuthDtos.cs` is the only file this re-vendor actually changed, and it changed completely.
+`AuthDtos.cs` is the only file WL-133's re-vendor actually changed, and it changed completely.
 `RegisterDeviceRequest`/`RegisterDeviceResponse` are **gone**: `POST /auth/register-device` no longer
 exists server-side, and `POST /auth/login` (`LoginRequest` → `LoginResponse`) is now the only thing
 that mints a token. Enrolling the device is a side effect of logging in, on the same `DeviceId` this
@@ -54,10 +77,19 @@ only a secret the app held. It is the wrong reading now: re-authenticating needs
 client deliberately does not store, and the server locks an account after five consecutive failed
 logins. The correct response to a 401 is therefore to ask a human to sign in, never to retry.
 
-The remaining auth records (`RegisterUserRequest`, `UserSummary`, `AuthCapabilitiesResponse`,
-`ChangePasswordRequest`, `DeviceSummary`, `DeleteAccountRequest`) back registration, capability
-discovery and account management — vendored because they are part of the contract, consumed by later
-plans rather than by `ApiSyncProvider` today.
+## Vendored but not called, and why that is not drift
+
+The client's live auth contract is `LoginRequest`, `LoginResponse`, `UserSummary`, `WhoAmIResponse`
+and `AuthCapabilitiesResponse` — `POST /auth/login`, `GET /auth/whoami` and `GET /auth/capabilities`.
+
+Plan 12 (WL-173) moves every account operation to the server's web portal, so the client stops
+calling the routes behind four more records: `RegisterUserRequest` (`/auth/register`, `/auth/claim`),
+`ChangePasswordRequest` (`/auth/password`), `DeviceSummary` (`/auth/devices`) and
+`DeleteAccountRequest` (`DELETE /auth/account`). **They are still vendored, deliberately.** Upstream
+still carries them, because the server keeps those routes alive as documented compatibility routes for
+v0.1.x clients in the field and operators' scripts. A record here that nothing in the client calls is
+therefore **not** drift and not dead code to tidy away: this folder is a faithful copy, and they leave
+when upstream removes them at its next release that breaks the wire on purpose.
 
 ## What the server tells us on a rejection
 
