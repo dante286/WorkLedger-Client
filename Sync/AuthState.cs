@@ -86,57 +86,6 @@ namespace WorkLedger_Client.Sync
     // looks to decide what to *do*.
     public sealed record LoginOutcome(bool Success, UserSummary? User, string? ErrorMessage);
 
-    // WL-146: what one registration or claim did.
-    //
-    // Carries no token, and that is the server's shape rather than an omission here: tokens are
-    // device-scoped and only POST /auth/login mints one, while creating an account is a user-level
-    // act with no device bound to it. A caller that wants to end up signed in must follow a success
-    // with a login - which the coordinator does automatically, because making someone type the
-    // credentials they just chose a second time is worse than one extra round trip.
-    //
-    // CapabilitiesStale says the cached AuthCapabilitiesResponse is describing a server that has
-    // moved on - registration switched off, or the last claimable account claimed - so the caller
-    // should re-probe rather than leave a form on screen that can only fail the same way twice.
-    public sealed record AccountOutcome(
-        bool Success, UserSummary? User, string? ErrorMessage, bool CapabilitiesStale = false);
-
-    // WL-140, plan 10: what one account-management call did.
-    //
-    // Deliberately says nothing about WHAT was managed. Removing a device, changing a password,
-    // signing every device out and deleting the account are four very different acts with exactly
-    // the same two possible outcomes from a caller's point of view - it worked, or here is a
-    // sentence saying why it didn't - and giving each its own result type would be four types
-    // distinguishable only by their names.
-    //
-    // ErrorMessage is written for a person to read. Where the server explains itself better than
-    // this client could (a rejected new password, a device that isn't on the account), it is the
-    // server's own sentence.
-    public sealed record AccountActionOutcome(bool Success, string? ErrorMessage)
-    {
-        public static readonly AccountActionOutcome Succeeded = new(true, null);
-
-        public static AccountActionOutcome Failed(string message) => new(false, message);
-    }
-
-    // WL-141: the account's devices, or the reason there aren't any to show.
-    //
-    // Success is separate from an empty list for the same reason PullResult.Succeeded is: a
-    // server that cannot be reached and an account with nothing on it are not the same fact, and
-    // a UI that renders "no devices" for a failed request is lying about the account.
-    //
-    // The order is the SERVER's - most recently seen first, never-seen last - and callers keep
-    // it. Re-sorting here would fight a decision the server made deliberately (see its
-    // AccountEndpoints.MapListDevices, which pays an extra ORDER BY term for exactly this).
-    public sealed record DeviceListOutcome(
-        bool Success, IReadOnlyList<DeviceSummary> Devices, string? ErrorMessage)
-    {
-        public static DeviceListOutcome Loaded(IReadOnlyList<DeviceSummary> devices)
-            => new(true, devices, null);
-
-        public static DeviceListOutcome Failed(string message)
-            => new(false, Array.Empty<DeviceSummary>(), message);
-    }
-
     // Implemented by a provider that authenticates, which today is only ApiSyncProvider -
     // FileSyncProvider syncs through a folder and NullSyncProvider does nothing, and neither
     // has a session to lose.

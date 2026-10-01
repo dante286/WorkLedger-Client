@@ -36,6 +36,51 @@ namespace WorkLedger_Client.ViewModels
         // everyone - never has to think about profiles at all.
         public bool HasMultipleProfiles => Profiles.Count > 1;
 
+        // WL-176, plan 12 item 7. Offered on the active profile, and only while signed out: signed
+        // in, detaching would contradict the session in hand. The coordinator enforces the same rule,
+        // so this only decides whether the button is worth showing.
+        public bool CanDetachFromAccount
+            => IsSignedOutOfApi && (_profileService?.ActiveProfile.HasIdentity ?? false);
+
+        partial void OnIsSignedOutOfApiChanged(bool value) => OnPropertyChanged(nameof(CanDetachFromAccount));
+
+        /// <summary>
+        /// "Detach from account...". WL-176, plan 12 item 7.
+        /// </summary>
+        /// <remarks>
+        /// The replacement for what WL-143 did automatically when the account was deleted in-app.
+        /// Deleted in the web portal, the account vanishes without this install hearing about it, and
+        /// without this the next sign-in would put the local data's owner in a fresh, empty profile.
+        /// The confirmation says what it keeps before what it forgets, because "detach" reads like
+        /// "remove" to anyone who skims it.
+        /// </remarks>
+        [RelayCommand]
+        private async Task DetachFromAccountAsync()
+        {
+            if (_profileService is null)
+                return;
+
+            var confirmed = await ConfirmAsync(
+                "Detach from account",
+                "This keeps every project, task and entry on this computer and forgets which server "
+                + "account they belonged to. The next account you sign in with will take them over and "
+                + "sync them to its server.\n\n"
+                + $"Use this when {_profileService.ActiveProfile.DisplayName} has been deleted, or you no "
+                + "longer use it. Nothing is deleted, here or on the server.",
+                "Detach");
+
+            if (!confirmed)
+                return;
+
+            var (success, message) = await _syncCoordinator.DetachFromAccountAsync();
+            if (success)
+                ApiEmail = _settings.ApiEmail ?? string.Empty;
+
+            RefreshProfiles();
+            RefreshSyncStatus();
+            _toastService?.ShowToast(message, success ? 5000 : 4500);
+        }
+
         [RelayCommand]
         private async Task SwitchProfileAsync()
         {
@@ -145,6 +190,7 @@ namespace WorkLedger_Client.ViewModels
 
             ActiveProfileName = active.DisplayName;
             OnPropertyChanged(nameof(HasMultipleProfiles));
+            OnPropertyChanged(nameof(CanDetachFromAccount));
         }
     }
 }

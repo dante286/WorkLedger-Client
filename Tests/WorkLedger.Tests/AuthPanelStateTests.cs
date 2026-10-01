@@ -9,9 +9,9 @@ namespace WorkLedger.Tests
     // WL-146, plan 9. The rules that decide what the auth panel offers, tested without Avalonia.
     //
     // The point of pulling AuthPanelState out of MainWindowViewModel was to make exactly these
-    // assertions cheap: which affordances a server allows, when Sign in must be refused outright,
-    // and what a repeated failure is allowed to say. All three are things a wrong answer makes
-    // either unusable or unsafe, and none of them needs a dispatcher to check.
+    // assertions cheap: when Sign in must be refused outright, what each auth state says, and what
+    // a repeated failure is allowed to say. All three are things a wrong answer makes either
+    // unusable or unsafe, and none of them needs a dispatcher to check.
     public class AuthPanelStateTests
     {
         private const string Email = "person@example.com";
@@ -22,86 +22,29 @@ namespace WorkLedger.Tests
             int minPasswordLength = 12,
             bool hasUnclaimedAccount = false,
             int maxFailedLogins = 5,
-            int lockoutMinutes = 15)
-            => new(registrationEnabled, requiresSecret, minPasswordLength, hasUnclaimedAccount, maxFailedLogins, lockoutMinutes);
+            int lockoutMinutes = 15,
+            string? portalUrl = null)
+            => new(registrationEnabled, requiresSecret, minPasswordLength, hasUnclaimedAccount, maxFailedLogins, lockoutMinutes,
+                PortalUrl: portalUrl);
 
-        // ------------------------------------------------------------ the visibility matrix
+        private const string Portal = "https://ledger.example.com/portal";
+
+        // ------------------------------------------------------------------ sign-in is unconditional
 
         [Fact]
-        public void RegistrationDisabled_HidesTheRegistrationUi_ButKeepsSignInAvailable()
+        public void SignIn_IsOffered_WhateverTheServerReports()
         {
-            // The whole reason GET /auth/capabilities exists (server S6 item 8). A client that only
-            // learns the flag from a 403 has already shown a form that could never work.
-            var panel = AuthPanelState.From(
+            // Plan 12 removed the registration and claim affordances, and with them the reason this
+            // used to be a visibility matrix. What survives is the half that mattered most: a server
+            // with registration closed still lets its existing users in, and so does one that
+            // predates /auth/capabilities or cannot be reached right now (null capabilities).
+            var closed = AuthPanelState.From(
                 AuthStatus.SignedOut, Capabilities(registrationEnabled: false), Email);
+            var unknown = AuthPanelState.From(AuthStatus.SignedOut, capabilities: null, signedInEmail: Email);
 
-            Assert.False(panel.ShowCreateAccount);
-
-            // And the other half, which matters just as much: a closed server still lets its
-            // existing users in. Gating sign-in on the registration flag would lock everyone out of
-            // a server whose owner shut the door behind them.
-            Assert.True(panel.ShowSignIn);
-        }
-
-        [Theory]
-        [InlineData(true)]
-        [InlineData(false)]
-        public void TheSignupSecretField_FollowsWhatTheServerSaysItNeeds(bool requiresSecret)
-        {
-            var panel = AuthPanelState.From(AuthStatus.SignedOut, Capabilities(requiresSecret: requiresSecret), Email);
-
-            Assert.Equal(requiresSecret, panel.ShowSignupSecret);
-        }
-
-        [Fact]
-        public void ClaimIsOffered_OnlyWhenTheServerHasAnUnclaimedAccount()
-        {
-            Assert.False(AuthPanelState.From(
-                AuthStatus.SignedOut, Capabilities(hasUnclaimedAccount: false), Email).ShowClaimServer);
-
-            Assert.True(AuthPanelState.From(
-                AuthStatus.SignedOut, Capabilities(hasUnclaimedAccount: true), Email).ShowClaimServer);
-        }
-
-        [Fact]
-        public void ClaimIsNotGatedOnRegistrationBeingEnabled()
-        {
-            // An operator who closed signups must still be able to take ownership of their own
-            // existing data - the server agrees, and does not gate /auth/claim on the flag either.
-            var panel = AuthPanelState.From(
-                AuthStatus.SignedOut,
-                Capabilities(registrationEnabled: false, hasUnclaimedAccount: true),
-                Email);
-
-            Assert.False(panel.ShowCreateAccount);
-            Assert.True(panel.ShowClaimServer);
-        }
-
-        [Fact]
-        public void NoCapabilities_DegradesToSignInOnly_RatherThanToAnErrorState()
-        {
-            // Null is what a server predating /auth/capabilities returns, and what an unreachable
-            // one leaves behind. Both are supported things to point at.
-            var panel = AuthPanelState.From(AuthStatus.SignedOut, capabilities: null, signedInEmail: Email);
-
-            Assert.True(panel.ShowSignIn);
-            Assert.False(panel.ShowCreateAccount);
-            Assert.False(panel.ShowClaimServer);
-            Assert.False(panel.ShowSignupSecret);
-
-            // And no password rule of our own, because there is nothing to base one on.
-            Assert.Equal(0, panel.MinPasswordLength);
-        }
-
-        [Fact]
-        public void WhileSignedIn_NeitherAccountAffordanceIsOffered()
-        {
-            // A second identity has nowhere to go: the local database holds exactly one owner.
-            var panel = AuthPanelState.From(
-                AuthStatus.SignedIn, Capabilities(hasUnclaimedAccount: true), Email);
-
-            Assert.False(panel.ShowCreateAccount);
-            Assert.False(panel.ShowClaimServer);
+            Assert.True(closed.ShowSignIn);
+            Assert.True(unknown.ShowSignIn);
+            Assert.False(unknown.IsLockedOut);
         }
 
         // ------------------------------------------------------------------ the lockout, in the UI
@@ -132,6 +75,122 @@ namespace WorkLedger.Tests
             Assert.Equal(string.Empty, AuthPanelState.DescribeLockoutCountdown(lifted, DateTime.UtcNow));
         }
 
+        // WL-176, plan 12 item 6. "I've reset my password" exists to undo exactly one thing - a
+        // lockout verdict a reset elsewhere has made stale - so it is offered for exactly as long as
+        // that verdict is disabling Sign in, and at no other time.
+        [Fact]
+        public void TheResetEscape_IsOfferedOnlyWhileLockedOut()
+        {
+            Assert.True(AuthPanelState.From(
+                AuthStatus.LockedOut(DateTime.UtcNow.AddMinutes(15)), Capabilities(portalUrl: Portal), Email)
+                .ShowResetPasswordEscape);
+
+            // A lockout with no Retry-After still disables Sign in, so it still gets the way out.
+            Assert.True(AuthPanelState.From(AuthStatus.LockedOut(null), Capabilities(), Email).ShowResetPasswordEscape);
+
+            var notLocked = new[]
+            {
+                AuthStatus.LockedOut(DateTime.UtcNow.AddSeconds(-1)), // lifted by itself
+                AuthStatus.SignedOut, AuthStatus.SignedIn, AuthStatus.SessionExpired,
+                AuthStatus.SessionRevoked, AuthStatus.RateLimited(DateTime.UtcNow.AddMinutes(1))
+            };
+
+            foreach (var status in notLocked)
+                Assert.False(AuthPanelState.From(status, Capabilities(portalUrl: Portal), Email).ShowResetPasswordEscape);
+        }
+
+        // ------------------------------------------------------------ the web portal (plan 12)
+
+        [Fact]
+        public void PortalUrl_ComesFromTheCapabilities_ExactlyAsAdvertised()
+        {
+            var panel = AuthPanelState.From(AuthStatus.SignedOut, Capabilities(portalUrl: Portal), Email);
+
+            Assert.Equal(Portal, panel.PortalUrl);
+        }
+
+        [Fact]
+        public void PortalUrl_IsNull_WhenThereAreNoCapabilities()
+        {
+            // An unreachable server, or one predating /auth/capabilities.
+            var panel = AuthPanelState.From(AuthStatus.SignedOut, capabilities: null, signedInEmail: Email);
+
+            Assert.Null(panel.PortalUrl);
+            Assert.False(panel.ShowOpenPortal);
+            Assert.False(panel.ShowManageAccount);
+        }
+
+        [Fact]
+        public void PortalUrl_IsNull_FromAPreS11Server()
+        {
+            // The six-field construction a pre-S11 response deserializes to - PortalUrl defaulted.
+            var preS11 = new AuthCapabilitiesResponse(true, true, 12, false, 5, 15);
+            var panel = AuthPanelState.From(AuthStatus.SignedOut, preS11, Email);
+
+            Assert.Null(panel.PortalUrl);
+            Assert.False(panel.ShowOpenPortal);
+
+            // A blank value is no portal either, rather than a button that opens nothing.
+            Assert.Null(AuthPanelState.From(AuthStatus.SignedOut, Capabilities(portalUrl: "  "), Email).PortalUrl);
+        }
+
+        [Fact]
+        public void SignedOut_WithAPortal_SaysAccountsComeFromItsInvites_AndOffersToOpenIt()
+        {
+            var panel = AuthPanelState.From(AuthStatus.SignedOut, Capabilities(portalUrl: Portal), Email);
+
+            Assert.True(panel.ShowOpenPortal);
+            Assert.False(panel.ShowManageAccount);
+            Assert.Contains("web portal", panel.PortalHint);
+
+            // The S11 handoff's point: the portal has no open sign-up, so the copy must not promise
+            // one. An account comes from an administrator's invite.
+            Assert.Contains("invite", panel.PortalHint);
+        }
+
+        [Fact]
+        public void SignedOut_WithoutAPortal_PointsAtTheAdministrator_AndOffersNoButton()
+        {
+            var panel = AuthPanelState.From(AuthStatus.SignedOut, Capabilities(), Email);
+
+            Assert.False(panel.ShowOpenPortal);
+            Assert.False(panel.ShowManageAccount);
+            Assert.Contains("administrator", panel.PortalHint);
+            Assert.DoesNotContain("portal", panel.PortalHint);
+        }
+
+        [Fact]
+        public void SignedIn_OffersManageAccount_AndNoNoAccountHint()
+        {
+            var panel = AuthPanelState.From(AuthStatus.SignedIn, Capabilities(portalUrl: Portal), Email);
+
+            Assert.True(panel.ShowManageAccount);
+            Assert.False(panel.ShowOpenPortal);
+            Assert.Equal(string.Empty, panel.PortalHint);
+        }
+
+        [Fact]
+        public void ARevokedSession_OffersManageAccount()
+        {
+            // The likeliest cause of a revocation now is something done in the portal - a password
+            // change, this device removed - and the portal is where to find out which.
+            var panel = AuthPanelState.From(AuthStatus.SessionRevoked, Capabilities(portalUrl: Portal), Email);
+
+            Assert.True(panel.ShowManageAccount);
+            Assert.False(panel.ShowOpenPortal);
+            Assert.Equal(string.Empty, panel.PortalHint);
+        }
+
+        [Fact]
+        public void ALockout_StillOffersThePortal_WhereAResetLinkIsRedeemed()
+        {
+            var panel = AuthPanelState.From(
+                AuthStatus.LockedOut(DateTime.UtcNow.AddMinutes(15)), Capabilities(portalUrl: Portal), Email);
+
+            Assert.True(panel.ShowOpenPortal);
+            Assert.True(panel.ShowResetPasswordEscape);
+        }
+
         // -------------------------------------------------------------- one message per state
 
         [Fact]
@@ -158,8 +217,15 @@ namespace WorkLedger.Tests
 
             // Plan 9 item 6: name the plausible causes, because a revoked session is otherwise
             // indistinguishable from a bug - and reassure, because the local work is untouched.
-            Assert.Contains("removed from another machine", revoked.StatusMessage);
+            // Plan 12 item 5: these are now the normal path for account changes made in a browser,
+            // so the copy names the reset and the web portal as well.
+            Assert.Contains("this device is removed", revoked.StatusMessage);
+            Assert.Contains("reset", revoked.StatusMessage);
+            Assert.Contains("web portal", revoked.StatusMessage);
             Assert.Contains("your work is safe on this device", revoked.StatusMessage, StringComparison.OrdinalIgnoreCase);
+
+            // And the lockout points at the only way out of a forgotten password.
+            Assert.Contains("reset link", locked.StatusMessage);
 
             // The rate limit is about the address, not the account - it may have been earned by a
             // different device on the same network.
@@ -234,86 +300,6 @@ namespace WorkLedger.Tests
                 Assert.DoesNotContain("5", warning);
                 Assert.DoesNotContain("15 minutes", warning);
             }
-        }
-
-        // ------------------------------------------ WL-143/WL-144: the account-deletion confirmation
-
-        [Fact]
-        public void TheDeletionConfirmation_MakesItsFourStatementsInOrder()
-        {
-            // The ORDER is the specification, not a preference. Someone reading a destructive
-            // confirmation reads the top and skims the rest, so the two facts that cannot be
-            // recovered from go first and the reassurance goes after them. Leading with "your local
-            // data is kept" would have people stop at the reassurance and miss that the server's
-            // copy goes permanently.
-            var text = AuthPanelState.DescribeAccountDeletion(Email);
-
-            var immediate = text.IndexOf("permanently and immediately", StringComparison.Ordinal);
-            var noUndo = text.IndexOf("no undo", StringComparison.Ordinal);
-            var localKept = text.IndexOf("is kept", StringComparison.Ordinal);
-            var export = text.IndexOf("Export CSV", StringComparison.Ordinal);
-
-            Assert.True(immediate >= 0 && noUndo >= 0 && localKept >= 0 && export >= 0);
-            Assert.True(immediate < noUndo, "the permanence must come before the no-undo");
-            Assert.True(noUndo < localKept, "the no-undo must come before the reassurance");
-            Assert.True(localKept < export, "the reassurance must come before the export advice");
-        }
-
-        [Fact]
-        public void TheDeletionConfirmation_NamesTheAccountAndPointsAtTheLocalExport()
-        {
-            var text = AuthPanelState.DescribeAccountDeletion(Email);
-
-            // Named, so nobody deletes the wrong account from a stale panel.
-            Assert.Contains(Email, text);
-
-            // The Reports tab's own CSV export, which is already in the app. The server's
-            // /reports/*?format=csv is deliberately NOT offered instead: this client does not
-            // consume the server's report endpoints at all, and an account about to stop existing
-            // is the worst possible moment to introduce a second export path.
-            Assert.Contains("Reports tab", text);
-
-            // And the thing that makes the whole feature survivable.
-            Assert.Contains("Nothing local is deleted", text);
-        }
-
-        [Fact]
-        public void TheDeletionConfirmation_StillReadsSensiblyWithoutAnEmail()
-        {
-            var text = AuthPanelState.DescribeAccountDeletion(null);
-
-            Assert.Contains("this account", text);
-            Assert.DoesNotContain("Delete  from", text);
-        }
-
-        // ------------------------------------------------------- password validation (item 3)
-
-        [Fact]
-        public void PasswordValidation_AcceptsExactlyWhatTheServerAllows()
-        {
-            // The boundary, from both sides. Nothing else is checked: the server deliberately has
-            // no composition rules (NIST 800-63B - length is the control that matters), and a
-            // client demanding a symbol would refuse a password the server would have taken.
-            Assert.Null(AuthPanelState.ValidateNewPassword(new string('a', 12), new string('a', 12), 12));
-
-            var tooShort = AuthPanelState.ValidateNewPassword(new string('a', 11), new string('a', 11), 12);
-            Assert.NotNull(tooShort);
-            Assert.Contains("12", tooShort);
-        }
-
-        [Fact]
-        public void PasswordValidation_AddsNoLengthRuleWhenTheServerStatedNone()
-        {
-            // MinPasswordLength 0 means "not told". Guessing a minimum would either refuse a
-            // password the server accepts or promise an acceptance we cannot deliver.
-            Assert.Null(AuthPanelState.ValidateNewPassword("short", "short", 0));
-        }
-
-        [Fact]
-        public void PasswordValidation_CatchesAMistypedConfirmation()
-        {
-            Assert.NotNull(AuthPanelState.ValidateNewPassword("correct horse", "correct hose", 12));
-            Assert.NotNull(AuthPanelState.ValidateNewPassword(string.Empty, string.Empty, 12));
         }
     }
 }

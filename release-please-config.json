@@ -1,6 +1,7 @@
 {
   "release-type": "simple",
   "versioning-strategy": "default",
+  "bump-minor-pre-major": true,
   "packages": {
     ".": {
       "extra-files": [

@@ -1,4 +1,4 @@
-// Vendored verbatim from WorkLedger-API, src/WorkLedger.Contracts/Sync/SyncConstants.cs @ 3d27c86.
+// Vendored verbatim from WorkLedger-API, src/WorkLedger.Contracts/Sync/SyncConstants.cs @ eb743d4.
 // The server is the source of truth for these shapes - see Sync/Contracts/README.md before editing.
 namespace WorkLedger.Contracts.Sync;
 

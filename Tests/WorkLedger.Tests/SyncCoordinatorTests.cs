@@ -308,112 +308,32 @@ namespace WorkLedger.Tests
             Assert.NotNull(await _alpha.Db.GetDatabaseOwnerAsync());
         }
 
-        // ---------------------------------------------- WL-146: registration, claim, capabilities
+        // ------------------------------------------------- WL-176: "I've reset my password"
 
         [Fact]
-        public async Task RegisterAndSignInAsync_CreatesTheAccountThenSignsIn_WithoutRetypingAnything()
+        public void ForgetServerVerdict_WithoutALockout_ChangesNothingAndSendsNothing()
         {
-            // /auth/register returns no token - creating an account is a user-level act with no
-            // device bound to it - so a registration that left the user signed out would be a form
-            // followed immediately by the same form. The coordinator follows through instead.
+            // It discards the stored token, which is right after a reset and wrong at any other
+            // time - so outside a lockout it must refuse rather than quietly sign a working session
+            // out. A handler with nothing scripted throws if anything at all is sent.
             _alpha.Settings.SyncMode = SyncMode.Api;
             _alpha.Settings.ApiEndpoint = ApiEndpoint;
+            _alpha.Settings.ApiToken = "live-token";
+            _alpha.Settings.ApiTokenExpiresAtUtc = DateTime.UtcNow.AddDays(30);
+            _alpha.SettingsService.SaveSettings(_alpha.Settings);
 
-            var handler = new ApiSyncProviderTests.RecordingHandler()
-                .EnqueueJson(HttpStatusCode.Created, new
-                {
-                    Id = 42, Email = "new@example.com", DisplayName = "New Person", CreatedAtUtc = DateTime.UtcNow
-                })
-                .EnqueueJson(HttpStatusCode.OK, new
-                {
-                    Token = "issued-token",
-                    ExpiresAtUtc = DateTime.UtcNow.AddDays(365),
-                    User = new { Id = 42, Email = "new@example.com", DisplayName = "New Person", CreatedAtUtc = DateTime.UtcNow }
-                });
-
+            var handler = new ApiSyncProviderTests.RecordingHandler();
             using var coordinator = new SyncCoordinator(
                 _alpha.Db, _alpha.SettingsService, _alpha.Settings, new HttpClient(handler));
 
-            var (success, message) = await coordinator.RegisterAndSignInAsync(
-                "new@example.com", "correct horse battery staple", "New Person", "signup-secret");
+            Assert.False(coordinator.ForgetServerVerdict());
 
-            Assert.True(success);
-            Assert.Contains("Account created", message);
-
-            Assert.Equal("issued-token", _alpha.Settings.ApiToken);
-            Assert.Equal("new@example.com", _alpha.Settings.ApiEmail);
-
-            Assert.Equal(new[] { "/auth/register", "/auth/login" },
-                handler.Requests.ConvertAll(request => request.Uri.AbsolutePath).ToArray());
-
-            // And the sign-in adopted the database on the way through, so this install is now
-            // stamped for the account it just created.
-            var owner = await _alpha.Db.GetDatabaseOwnerAsync();
-            Assert.Equal(42, owner!.UserId);
+            Assert.Equal("live-token", _alpha.Settings.ApiToken);
+            Assert.True(coordinator.ApiAuth.CanSync);
+            Assert.Empty(handler.Requests);
         }
 
-        [Fact]
-        public async Task RegisterAndSignInAsync_OnADuplicateEmail_LeavesNothingSignedIn()
-        {
-            _alpha.Settings.SyncMode = SyncMode.Api;
-            _alpha.Settings.ApiEndpoint = ApiEndpoint;
-
-            var handler = new ApiSyncProviderTests.RecordingHandler()
-                .EnqueueRaw(HttpStatusCode.Conflict, "{}")
-                // The re-probe the stale capabilities trigger.
-                .EnqueueJson(HttpStatusCode.OK, new
-                {
-                    RegistrationEnabled = true, RegistrationRequiresSecret = true, MinPasswordLength = 12,
-                    HasUnclaimedAccount = false, MaxFailedLogins = 5, LockoutMinutes = 15
-                });
-
-            using var coordinator = new SyncCoordinator(
-                _alpha.Db, _alpha.SettingsService, _alpha.Settings, new HttpClient(handler));
-
-            var (success, message) = await coordinator.RegisterAndSignInAsync(
-                "taken@example.com", "correct horse battery staple", null, "signup-secret");
-
-            Assert.False(success);
-            Assert.Contains("already exists", message);
-
-            Assert.Equal(string.Empty, _alpha.Settings.ApiToken);
-            Assert.Null(await _alpha.Db.GetDatabaseOwnerAsync());
-
-            // No login was attempted - there is no account to log into - and the capabilities were
-            // re-asked so the panel stops offering what just proved impossible.
-            Assert.DoesNotContain(handler.Requests, request => request.Uri.AbsolutePath == "/auth/login");
-            Assert.Contains(handler.Requests, request => request.Uri.AbsolutePath == "/auth/capabilities");
-        }
-
-        [Fact]
-        public async Task ClaimAndSignInAsync_TakesOwnershipThenSignsIn()
-        {
-            _alpha.Settings.SyncMode = SyncMode.Api;
-            _alpha.Settings.ApiEndpoint = ApiEndpoint;
-
-            var handler = new ApiSyncProviderTests.RecordingHandler()
-                .EnqueueJson(HttpStatusCode.OK, new
-                {
-                    Id = 1, Email = "owner@example.com", DisplayName = (string?)null, CreatedAtUtc = DateTime.UtcNow
-                })
-                .EnqueueJson(HttpStatusCode.OK, new
-                {
-                    Token = "issued-token",
-                    ExpiresAtUtc = DateTime.UtcNow.AddDays(365),
-                    User = new { Id = 1, Email = "owner@example.com", DisplayName = (string?)null, CreatedAtUtc = DateTime.UtcNow }
-                });
-
-            using var coordinator = new SyncCoordinator(
-                _alpha.Db, _alpha.SettingsService, _alpha.Settings, new HttpClient(handler));
-
-            var (success, message) = await coordinator.ClaimAndSignInAsync(
-                "owner@example.com", "correct horse battery staple", null, "signup-secret");
-
-            Assert.True(success);
-            Assert.Contains("Claimed this server", message);
-            Assert.Equal("/auth/claim", handler.Requests[0].Uri.AbsolutePath);
-            Assert.Equal("issued-token", _alpha.Settings.ApiToken);
-        }
+        // -------------------------------------------- WL-146: rejected sign-ins and capabilities
 
         // The server answers unknown email, wrong password and a credential-less legacy account with
         // an identical 401, on purpose, so an anonymous caller cannot enumerate accounts. Asserted
@@ -471,241 +391,6 @@ namespace WorkLedger.Tests
             _alpha.Settings.ApiEndpoint = string.Empty;
 
             Assert.Null(await _alpha.Coordinator.GetCapabilitiesAsync());
-        }
-
-        // ------------------------------------------------ WL-144: account management (plan 10)
-
-        // A coordinator that believes it is signed in, so the account calls have a session to use.
-        private SyncCoordinator SignedInCoordinator(
-            ApiSyncProviderTests.RecordingHandler handler, string email = "owner@example.com")
-        {
-            _alpha.Settings.SyncMode = SyncMode.Api;
-            _alpha.Settings.ApiEndpoint = ApiEndpoint;
-            _alpha.Settings.ApiEmail = email;
-            _alpha.Settings.ApiToken = "live-token";
-            _alpha.Settings.ApiTokenExpiresAtUtc = DateTime.UtcNow.AddDays(30);
-            _alpha.Settings.LastSyncedAtUtc = DateTime.UtcNow.AddHours(-1);
-            _alpha.SettingsService.SaveSettings(_alpha.Settings);
-
-            return new SyncCoordinator(
-                _alpha.Db, _alpha.SettingsService, _alpha.Settings, new HttpClient(handler));
-        }
-
-        // Three entities and the queue rows they generate, so "nothing local was deleted" has
-        // something to be true about.
-        private async Task<(int Entities, int Queued)> SeedLocalWorkAsync()
-        {
-            var project = new Project { Name = "Kept project" };
-            await _alpha.Db.SaveProjectAsync(project);
-
-            var task = new TaskItem { Name = "Kept task", ProjectId = project.Id };
-            await _alpha.Db.SaveTaskAsync(task);
-
-            await _alpha.Db.SaveTimeEntryAsync(new TimeEntry
-            {
-                TaskItemId = task.Id,
-                StartTime = DateTime.UtcNow.AddHours(-2),
-                EndTime = DateTime.UtcNow.AddHours(-1)
-            });
-
-            var entities = (await _alpha.Db.GetAllAsync<Project>()).Count
-                + (await _alpha.Db.GetAllAsync<TaskItem>()).Count
-                + (await _alpha.Db.GetAllAsync<TimeEntry>()).Count;
-
-            return (entities, (await _alpha.Db.GetAllAsync<SyncQueue>()).Count);
-        }
-
-        [Fact]
-        public async Task DeleteAccountAsync_WithAMismatchedEmail_SendsNothingAtAll()
-        {
-            // The local half of the typed-confirmation gate. The server checks the email too, but
-            // only AFTER it has checked the password - so letting a typo reach it would spend one
-            // of the five attempts standing between this user and a lockout, for a mistake the
-            // client can see. A handler with nothing scripted throws if anything is sent.
-            var handler = new ApiSyncProviderTests.RecordingHandler();
-            using var coordinator = SignedInCoordinator(handler);
-
-            var (success, message) = await coordinator.DeleteAccountAsync("correct password", "typo@example.com");
-
-            Assert.False(success);
-            Assert.Contains("owner@example.com", message);
-            Assert.Empty(handler.Requests);
-
-            // And nothing was pre-emptively cleared on the way to refusing.
-            Assert.Equal("live-token", _alpha.Settings.ApiToken);
-            Assert.Equal(SyncMode.Api, _alpha.Settings.SyncMode);
-        }
-
-        [Theory]
-        [InlineData(HttpStatusCode.Unauthorized, "{\"error\":\"Password is incorrect.\"}")]
-        [InlineData(HttpStatusCode.BadRequest, "{\"error\":\"ConfirmEmail does not match this account's email address.\"}")]
-        public async Task DeleteAccountAsync_WhenTheServerRefuses_ChangesNoLocalStateWhatsoever(
-            HttpStatusCode status, string body)
-        {
-            // The server guarantees a failed guard leaves the account fully intact, so anything
-            // cleared here would invent the very problem the guard just prevented.
-            var handler = new ApiSyncProviderTests.RecordingHandler().EnqueueRaw(status, body);
-            using var coordinator = SignedInCoordinator(handler);
-
-            var seeded = await SeedLocalWorkAsync();
-            var (success, _) = await coordinator.DeleteAccountAsync("whatever", "owner@example.com");
-
-            Assert.False(success);
-
-            Assert.Equal("live-token", _alpha.Settings.ApiToken);
-            Assert.Equal("owner@example.com", _alpha.Settings.ApiEmail);
-            Assert.Equal(SyncMode.Api, _alpha.Settings.SyncMode);
-            Assert.NotNull(_alpha.Settings.LastSyncedAtUtc);
-
-            Assert.Equal(seeded.Queued, (await _alpha.Db.GetAllAsync<SyncQueue>()).Count);
-        }
-
-        [Fact]
-        public async Task DeleteAccountAsync_OnSuccess_EndsTheSession_ButKeepsEveryLocalRow()
-        {
-            // THE test for this plan. The confirmation dialog promises that deleting the account
-            // destroys the server's copy and keeps this device's, and a promise about data is only
-            // worth what a row count says it is.
-            var handler = new ApiSyncProviderTests.RecordingHandler()
-                .EnqueueNoBody(HttpStatusCode.NoContent);
-
-            using var coordinator = SignedInCoordinator(handler);
-            var seeded = await SeedLocalWorkAsync();
-
-            var (success, message) = await coordinator.DeleteAccountAsync("correct password", "owner@example.com");
-
-            Assert.True(success);
-
-            // --- the promise -------------------------------------------------------------------
-            Assert.Equal(
-                seeded.Entities,
-                (await _alpha.Db.GetAllAsync<Project>()).Count
-                + (await _alpha.Db.GetAllAsync<TaskItem>()).Count
-                + (await _alpha.Db.GetAllAsync<TimeEntry>()).Count);
-
-            // The queue keeps its unsent rows deliberately. They can never reach the deleted
-            // account, but nothing tries to send them with sync off, and they are exactly what a
-            // later sign-in to a DIFFERENT account would want pushed.
-            Assert.Equal(seeded.Queued, (await _alpha.Db.GetAllAsync<SyncQueue>()).Count);
-            Assert.Contains("still here on this device", message);
-
-            // --- the session -------------------------------------------------------------------
-            Assert.Equal(string.Empty, _alpha.Settings.ApiToken);
-            Assert.Null(_alpha.Settings.ApiTokenExpiresAtUtc);
-            Assert.Equal(string.Empty, _alpha.Settings.ApiEmail);
-            Assert.Null(_alpha.Settings.LastSyncedAtUtc);
-
-            // Sync off, and off in a way that has actually taken effect rather than only been
-            // written down: a run now reports the mode rather than attempting a doomed request.
-            Assert.Equal(SyncMode.Off, _alpha.Settings.SyncMode);
-            var run = await coordinator.SyncNowAsync();
-            Assert.False(run.Ran);
-            Assert.Contains("turned off", run.ErrorMessage);
-
-            // The endpoint survives: it is still the right server to point a new account at.
-            Assert.Equal(ApiEndpoint, _alpha.Settings.ApiEndpoint);
-
-            // WL-138's stamp named an account that no longer exists. Releasing its identity is what
-            // stops the guard refusing this database to the person who just deleted their own
-            // account - it can no longer protect anything, only obstruct.
-            var owner = await _alpha.Db.GetDatabaseOwnerAsync();
-            Assert.False(owner?.HasIdentity ?? false);
-        }
-
-        [Fact]
-        public async Task RemoveDeviceAsync_ForThisVeryDevice_SignsTheAppOut_AndKeepsTheData()
-        {
-            // Permitted server-side and meaning "sign this device out", so the coordinator stands
-            // the session down rather than leaving the app holding a token it already knows is
-            // dead and reporting a revocation on the next tick.
-            var handler = new ApiSyncProviderTests.RecordingHandler()
-                .EnqueueNoBody(HttpStatusCode.NoContent);
-
-            using var coordinator = SignedInCoordinator(handler);
-            var seeded = await SeedLocalWorkAsync();
-
-            var (success, message) = await coordinator.RemoveDeviceAsync(_alpha.Settings.DeviceId);
-
-            Assert.True(success);
-            Assert.Equal(string.Empty, _alpha.Settings.ApiToken);
-            Assert.Contains("signed out", message);
-
-            // An auth event, never a data event - the email, the mode and every row survive.
-            Assert.Equal("owner@example.com", _alpha.Settings.ApiEmail);
-            Assert.Equal(SyncMode.Api, _alpha.Settings.SyncMode);
-            Assert.Equal(seeded.Queued, (await _alpha.Db.GetAllAsync<SyncQueue>()).Count);
-        }
-
-        [Fact]
-        public async Task RemoveDeviceAsync_ForAnotherDevice_LeavesThisSessionSignedIn()
-        {
-            var handler = new ApiSyncProviderTests.RecordingHandler()
-                .EnqueueNoBody(HttpStatusCode.NoContent);
-
-            using var coordinator = SignedInCoordinator(handler);
-
-            var (success, message) = await coordinator.RemoveDeviceAsync("some-other-device");
-
-            Assert.True(success);
-            Assert.Equal("live-token", _alpha.Settings.ApiToken);
-
-            // The sentence that closes off the wrong assumption about this endpoint.
-            Assert.Contains("stays on the account", message);
-        }
-
-        [Fact]
-        public async Task ChangePasswordAsync_ReportsThatTheOtherDevicesWereSignedOut()
-        {
-            // They were, because the server rotates the security stamp - and a user who is not told
-            // reads their phone's next sign-in prompt as a bug.
-            var handler = new ApiSyncProviderTests.RecordingHandler().EnqueueJson(HttpStatusCode.OK, new
-            {
-                Token = "rotated-token",
-                ExpiresAtUtc = DateTime.UtcNow.AddDays(365),
-                User = new { Id = 1, Email = "owner@example.com", DisplayName = (string?)null, CreatedAtUtc = DateTime.UtcNow }
-            });
-
-            using var coordinator = SignedInCoordinator(handler);
-
-            var (success, message) = await coordinator.ChangePasswordAsync("old pass", "new pass phrase");
-
-            Assert.True(success);
-            Assert.Equal("rotated-token", _alpha.Settings.ApiToken);
-            Assert.Contains("other devices have been signed out", message);
-        }
-
-        [Fact]
-        public async Task SignOutEverywhereAsync_KeepsThisDeviceSignedIn()
-        {
-            // The whole point of the endpoint handing back a token. If this device ended up signed
-            // out, "sign out my other devices" would have signed out the device asking.
-            var handler = new ApiSyncProviderTests.RecordingHandler().EnqueueJson(HttpStatusCode.OK, new
-            {
-                Token = "rotated-token",
-                ExpiresAtUtc = DateTime.UtcNow.AddDays(365),
-                User = new { Id = 1, Email = "owner@example.com", DisplayName = (string?)null, CreatedAtUtc = DateTime.UtcNow }
-            });
-
-            using var coordinator = SignedInCoordinator(handler);
-
-            var (success, message) = await coordinator.SignOutEverywhereAsync();
-
-            Assert.True(success);
-            Assert.Equal("rotated-token", _alpha.Settings.ApiToken);
-            Assert.True(coordinator.ApiAuth.CanSync);
-            Assert.Contains("still signed in", message);
-        }
-
-        [Fact]
-        public async Task GetDevicesAsync_WithoutAnEndpoint_AnswersAFailureRatherThanThrowing()
-        {
-            _alpha.Settings.SyncMode = SyncMode.Api;
-            _alpha.Settings.ApiEndpoint = string.Empty;
-
-            var outcome = await _alpha.Coordinator.GetDevicesAsync();
-
-            Assert.False(outcome.Success);
-            Assert.Empty(outcome.Devices);
         }
 
         private const string ApiEndpoint = "https://workledger.example.com";

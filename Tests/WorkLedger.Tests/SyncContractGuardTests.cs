@@ -307,6 +307,59 @@ namespace WorkLedger.Tests
             Assert.Equal(capabilities, round);
         }
 
+        // WL-174. S10 and S11 appended two defaulted fields, so the six-argument construction above
+        // still compiles without mentioning them - it would keep passing if either were renamed or
+        // dropped. Naming all eight here is what pins them: a rename upstream stops this building,
+        // rather than the portal link quietly reading null off the wire.
+        [Fact]
+        public void AuthCapabilitiesResponse_CarriesThePortalUrlAndInviteFlag()
+        {
+            var capabilities = new AuthCapabilitiesResponse(
+                RegistrationEnabled: true,
+                RegistrationRequiresSecret: false,
+                MinPasswordLength: 12,
+                HasUnclaimedAccount: false,
+                MaxFailedLogins: 5,
+                LockoutMinutes: 15,
+                RegistrationAcceptsInvite: true,
+                PortalUrl: "https://ledger.example.com/portal");
+
+            var round = JsonSerializer.Deserialize<AuthCapabilitiesResponse>(
+                JsonSerializer.Serialize(capabilities, SyncJson.Options), SyncJson.Options);
+
+            Assert.Equal(capabilities, round);
+            Assert.True(round!.RegistrationAcceptsInvite);
+            Assert.Equal("https://ledger.example.com/portal", round.PortalUrl);
+        }
+
+        // The server writes camelCase, and a pre-S11 server writes no portalUrl at all. Both must
+        // read correctly through SyncJson.Options (case-insensitive), and the absent field must
+        // come back null - "this server has no portal" - not throw or invent a value.
+        [Fact]
+        public void AuthCapabilitiesResponse_FromAPreS11Server_HasNoPortal()
+        {
+            const string preS11 = """
+                {"registrationEnabled":true,"registrationRequiresSecret":true,"minPasswordLength":12,
+                 "hasUnclaimedAccount":false,"maxFailedLogins":5,"lockoutMinutes":15}
+                """;
+            var old = JsonSerializer.Deserialize<AuthCapabilitiesResponse>(preS11, SyncJson.Options);
+
+            Assert.NotNull(old);
+            Assert.Null(old!.PortalUrl);
+            Assert.False(old.RegistrationAcceptsInvite);
+            Assert.Equal(5, old.MaxFailedLogins);
+
+            const string s11 = """
+                {"registrationEnabled":true,"registrationRequiresSecret":false,"minPasswordLength":12,
+                 "hasUnclaimedAccount":false,"maxFailedLogins":5,"lockoutMinutes":15,
+                 "registrationAcceptsInvite":true,"portalUrl":"https://ledger.example.com/portal"}
+                """;
+            var current = JsonSerializer.Deserialize<AuthCapabilitiesResponse>(s11, SyncJson.Options);
+
+            Assert.Equal("https://ledger.example.com/portal", current!.PortalUrl);
+            Assert.True(current.RegistrationAcceptsInvite);
+        }
+
         private async Task<T> ReadQueuedPayloadAsync<T>(string entityType)
         {
             var queue = await _db.GetAllAsync<SyncQueue>();

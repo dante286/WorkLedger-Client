@@ -184,8 +184,9 @@ namespace WorkLedger_Client.Services
             });
 
         /// <summary>
-        /// WL-143: drops the stamp's <i>identity</i> after the account it names has been deleted,
-        /// leaving the database adoptable again. Writes no user data and deletes none.
+        /// Drops the stamp's <i>identity</i>, leaving the database adoptable again. Writes no user
+        /// data and deletes none. WL-143, and since plan 12 the database half of "Detach from
+        /// account" (WL-176).
         /// </summary>
         /// <remarks>
         /// This is the same shape <see cref="BackfillDatabaseOwnerAsync"/> produces - a row with no
@@ -193,13 +194,14 @@ namespace WorkLedger_Client.Services
         /// <see cref="DatabaseOwnershipVerdict.Unclaimed"/> - so it adds no state, only a second
         /// way of reaching one that exists.
         /// <para>
-        /// Called <b>only</b> after a successful <c>DELETE /auth/account</c>, and the guard loses
-        /// nothing by it. WL-138's stamp exists to stop two people's timesheets being merged, and
-        /// the account it was protecting against no longer exists to be merged with; what it would
-        /// otherwise do is refuse the owner - who proved they were the owner by supplying that
-        /// account's password and typing its address - if they ever signed in again with a new
-        /// account on the same machine. Nobody gains access they could not already have had:
-        /// deleting the account required exactly the credentials the stamp was checking for.
+        /// WL-143 called it after a successful in-app <c>DELETE /auth/account</c>. Accounts are now
+        /// deleted in the server's web portal, which this install never hears about, so the call
+        /// moved to a command the user invokes - signed out, on the active profile only, see
+        /// <c>SyncCoordinator.DetachFromAccountAsync</c>. The argument for it is unchanged: WL-138's
+        /// stamp exists to stop two people's timesheets being merged, and a stamp naming a deleted
+        /// account protects nobody - it only strands the data in a fresh profile the next time its
+        /// owner signs in. Detaching is something the person at this machine asks for, about data
+        /// already on this machine, while no session is in hand to contradict it.
         /// </para>
         /// <para>
         /// <c>ClaimedAtUtc</c> is refreshed rather than the row being deleted outright, so the

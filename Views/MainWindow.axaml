@@ -623,6 +623,16 @@
                     <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
                         <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Active profile</TextBlock>
                         <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextPrimary}" Text="{Binding ActiveProfileName}" />
+                        <!-- WL-176, plan 12 item 7. Active profile, signed out only. The replacement
+                             for WL-143's automatic release, for an account deleted or abandoned in
+                             the web portal: the confirmation says it keeps every row. -->
+                        <Button Margin="8,0,0,0" Command="{Binding DetachFromAccountCommand}"
+                                IsVisible="{Binding CanDetachFromAccount}"
+                                Background="{DynamicResource Surface}" Foreground="{DynamicResource TextSecondary}"
+                                FontSize="12" FontWeight="500" Padding="8,5" CornerRadius="7"
+                                VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
+                            <TextBlock Text="Detach from account..." />
+                        </Button>
                     </StackPanel>
 
                     <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center"
@@ -722,15 +732,10 @@
                         </Button>
                     </StackPanel>
 
-                    <!-- API sync: endpoint, sign-in, and the capability-driven account affordances
-                         (WL-145 + WL-146).
-
-                         Everything below the sign-in row is conditional on what GET /auth/capabilities
-                         reported, NOT on what this client can imagine offering. A server with
-                         registration switched off shows no registration form - the flag exists for
-                         exactly this, and a client that learns it from a 403 has already shown a form
-                         that could only fail. The sign-in row itself is unconditional: a closed server
-                         still lets its existing users in. -->
+                    <!-- API sync: endpoint and sign-in (WL-145 + WL-146). That is all of it: accounts
+                         are created and managed in the server's web portal (plan 12), and this panel
+                         only signs an existing account in. The sign-in row is unconditional - a
+                         server with registration closed still lets its existing users in. -->
                     <StackPanel Spacing="{DynamicResource SpacingLarge}" IsVisible="{Binding IsApiSyncSelected}">
                         <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
                             <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">API Endpoint</TextBlock>
@@ -761,12 +766,49 @@
                                        Foreground="{DynamicResource TextSecondary}"
                                        IsVisible="{Binding IsLockedOut}"
                                        Text="{Binding LockoutCountdown}" />
+                            <!-- Plan 12 item 6. A reset redeemed in the browser clears the server's
+                                 lockout, but this install cannot see it happen. Sends nothing: it
+                                 only re-enables Sign in for the new password. -->
+                            <Button Margin="4,0,0,0" Command="{Binding ForgetLockoutCommand}"
+                                    IsVisible="{Binding ShowResetPasswordEscape}"
+                                    Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
+                                    FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
+                                    VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
+                                <TextBlock Text="I've reset my password" />
+                            </Button>
                             <Button Margin="4,0,0,0" Command="{Binding SignOutCommand}"
                                     IsVisible="{Binding !IsSignedOutOfApi}"
                                     Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
                                     FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
                                     VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
                                 <TextBlock Text="Sign out" />
+                            </Button>
+                            <!-- Plan 12 item 5. Signed in, or signed out by the server - the portal is
+                                 where the password, devices and the account itself are managed, and
+                                 where whatever revoked this session was most likely done. -->
+                            <Button Margin="4,0,0,0" Command="{Binding OpenPortalCommand}"
+                                    IsVisible="{Binding ShowManageAccount}"
+                                    Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
+                                    FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
+                                    VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
+                                <TextBlock Text="Manage account" />
+                            </Button>
+                        </StackPanel>
+
+                        <!-- Plan 12 item 5. Accounts are made on the server's web portal, so a
+                             signed-out panel says where - or, for a server that has not advertised a
+                             portal, who to ask. No URL is ever guessed from the API endpoint. -->
+                        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                            <TextBlock VerticalAlignment="Center" FontSize="12" TextWrapping="Wrap" MaxWidth="420"
+                                       Foreground="{DynamicResource TextSecondary}"
+                                       IsVisible="{Binding PortalHint, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                       Text="{Binding PortalHint}" />
+                            <Button Command="{Binding OpenPortalCommand}"
+                                    IsVisible="{Binding ShowOpenPortal}"
+                                    Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
+                                    FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
+                                    VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
+                                <TextBlock Text="Open web portal" />
                             </Button>
                         </StackPanel>
 
@@ -777,255 +819,9 @@
                                    HorizontalAlignment="Left" FontSize="12"
                                    Foreground="{DynamicResource TextSecondary}" />
 
-                        <!-- Shown only when the server says registration is on, or that it still has
-                             an unclaimed account. Claim is deliberately not gated on registration
-                             being enabled: an operator who closed signups must still be able to take
-                             ownership of their own existing data. -->
-                        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
-                            <Button Command="{Binding ToggleCreateAccountCommand}"
-                                    IsVisible="{Binding CanCreateAccount}"
-                                    Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
-                                    FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
-                                    VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
-                                <TextBlock Text="Create an account" />
-                            </Button>
-                            <Button Command="{Binding ToggleCreateAccountCommand}"
-                                    IsVisible="{Binding CanClaimServer}"
-                                    Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
-                                    FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
-                                    VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
-                                <TextBlock Text="Claim this server" />
-                            </Button>
-                        </StackPanel>
-
-                        <Border IsVisible="{Binding IsCreateAccountOpen}"
-                                Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Border}"
-                                BorderThickness="1" CornerRadius="8" Padding="12" HorizontalAlignment="Left">
-                            <StackPanel Spacing="{DynamicResource SpacingMedium}">
-                                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
-                                    <TextBlock VerticalAlignment="Center" Width="120" Foreground="{DynamicResource TextSecondary}">Email</TextBlock>
-                                    <TextBox Width="240" Text="{Binding NewAccountEmail, Mode=TwoWay}" Watermark="you@example.com" />
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
-                                    <TextBlock VerticalAlignment="Center" Width="120" Foreground="{DynamicResource TextSecondary}">Display name</TextBlock>
-                                    <TextBox Width="240" Text="{Binding NewAccountDisplayName, Mode=TwoWay}" Watermark="optional" />
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
-                                    <TextBlock VerticalAlignment="Center" Width="120" Foreground="{DynamicResource TextSecondary}">Password</TextBlock>
-                                    <TextBox Width="240" PasswordChar="•" Text="{Binding NewAccountPassword, Mode=TwoWay}" />
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
-                                    <TextBlock VerticalAlignment="Center" Width="120" Foreground="{DynamicResource TextSecondary}">Confirm</TextBlock>
-                                    <TextBox Width="240" PasswordChar="•" Text="{Binding NewAccountConfirmPassword, Mode=TwoWay}" />
-                                </StackPanel>
-                                <!-- Only when the server says it needs one. This is the single place
-                                     the bootstrap secret survives the login cutover, and it is held
-                                     for one call and never persisted. -->
-                                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center"
-                                            IsVisible="{Binding RequiresSignupSecret}">
-                                    <TextBlock VerticalAlignment="Center" Width="120" Foreground="{DynamicResource TextSecondary}">Signup secret</TextBlock>
-                                    <TextBox Width="240" PasswordChar="•" Text="{Binding SignupSecret, Mode=TwoWay}" />
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
-                                    <Button Command="{Binding CreateAccountCommand}" IsVisible="{Binding CanCreateAccount}"
-                                            Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
-                                            FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
-                                            BorderThickness="1" BorderBrush="{DynamicResource Border}">
-                                        <TextBlock Text="Create account" />
-                                    </Button>
-                                    <Button Command="{Binding ClaimServerCommand}" IsVisible="{Binding CanClaimServer}"
-                                            Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
-                                            FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
-                                            BorderThickness="1" BorderBrush="{DynamicResource Border}">
-                                        <TextBlock Text="Take ownership of this server's data" />
-                                    </Button>
-                                    <Button Command="{Binding ToggleCreateAccountCommand}"
-                                            Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
-                                            FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
-                                            BorderThickness="1" BorderBrush="{DynamicResource Border}">
-                                        <TextBlock Text="Cancel" />
-                                    </Button>
-                                </StackPanel>
-                            </StackPanel>
-                        </Border>
-
                         <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
                             <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Device</TextBlock>
                             <TextBlock VerticalAlignment="Center" Text="{Binding DeviceId}" FontFamily="{DynamicResource FontMono}" FontSize="12" />
-                        </StackPanel>
-
-                        <!-- WL-141: where this account is signed in. Signed-in only - there is no
-                             token to ask with otherwise, and nothing to show.
-
-                             The identifier on screen is the DeviceId GUID, the same value stamped as
-                             OriginDeviceId on every row this install writes. The server's internal
-                             row id is never on the wire, exactly as synced entities are addressed by
-                             SyncId and never by their local Id. -->
-                        <StackPanel Spacing="{DynamicResource SpacingMedium}" IsVisible="{Binding !IsSignedOutOfApi}">
-                            <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
-                                <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}">Devices on this account</TextBlock>
-                                <Button Command="{Binding LoadDevicesCommand}"
-                                        Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
-                                        FontSize="12" FontWeight="500" Padding="7,4" CornerRadius="6"
-                                        VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
-                                    <TextBlock Text="Refresh" />
-                                </Button>
-                                <TextBlock VerticalAlignment="Center" FontSize="12" Foreground="{DynamicResource TextSecondary}"
-                                           IsVisible="{Binding IsLoadingDevices}" Text="Loading..." />
-                            </StackPanel>
-
-                            <TextBlock IsVisible="{Binding DeviceListMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
-                                       Text="{Binding DeviceListMessage}" TextWrapping="Wrap" MaxWidth="560"
-                                       FontSize="12" Foreground="{DynamicResource TextSecondary}" />
-
-                            <ItemsControl ItemsSource="{Binding Devices}" HorizontalAlignment="Left">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate x:DataType="vm:AccountDeviceViewModel">
-                                        <Border Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Border}"
-                                                BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,0,6">
-                                            <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
-                                                <StackPanel Spacing="2" Width="330">
-                                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                                        <TextBlock Text="{Binding Label}" FontWeight="600" FontSize="13" />
-                                                        <Border Background="{DynamicResource Surface2}" CornerRadius="4" Padding="5,1"
-                                                                IsVisible="{Binding IsCurrent}" VerticalAlignment="Center">
-                                                            <TextBlock Text="{Binding CurrentBadge}" FontSize="11"
-                                                                       Foreground="{DynamicResource TextSecondary}" />
-                                                        </Border>
-                                                    </StackPanel>
-                                                    <TextBlock Text="{Binding LastSeen}" FontSize="12"
-                                                               Foreground="{DynamicResource TextSecondary}" />
-                                                    <TextBlock Text="{Binding DeviceId}" FontSize="11"
-                                                               FontFamily="{DynamicResource FontMono}"
-                                                               Foreground="{DynamicResource TextSecondary}" />
-                                                </StackPanel>
-                                                <!-- Offered for the current device too. It is permitted server-side and
-                                                     means "sign this app out"; the button says so and the confirmation
-                                                     says it again. A silent guard here would be this client overriding
-                                                     a deliberate server decision. -->
-                                                <Button Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).RemoveDeviceCommand}"
-                                                        CommandParameter="{Binding}"
-                                                        Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
-                                                        FontSize="12" FontWeight="500" Padding="8,5" CornerRadius="6"
-                                                        VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
-                                                    <TextBlock Text="{Binding RemoveLabel}" />
-                                                </Button>
-                                            </StackPanel>
-                                        </Border>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </StackPanel>
-
-                        <!-- WL-142: the two account actions that are not about this device alone.
-                             Signed-in only. -->
-                        <StackPanel Spacing="{DynamicResource SpacingMedium}" IsVisible="{Binding !IsSignedOutOfApi}">
-                            <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
-                                <Button Command="{Binding ToggleChangePasswordCommand}"
-                                        Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
-                                        FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
-                                        VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
-                                    <TextBlock Text="Change password" />
-                                </Button>
-                                <!-- Distinct from the local Sign out above it: that one drops this
-                                     app's token and tells the server nothing, this one kills every
-                                     token the account has. Both leave local data alone. -->
-                                <Button Command="{Binding SignOutEverywhereCommand}"
-                                        Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
-                                        FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
-                                        VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
-                                    <TextBlock Text="Sign out everywhere" />
-                                </Button>
-                            </StackPanel>
-
-                            <Border IsVisible="{Binding IsChangePasswordOpen}"
-                                    Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Border}"
-                                    BorderThickness="1" CornerRadius="8" Padding="12" HorizontalAlignment="Left">
-                                <StackPanel Spacing="{DynamicResource SpacingMedium}">
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
-                                        <TextBlock VerticalAlignment="Center" Width="140" Foreground="{DynamicResource TextSecondary}">Current password</TextBlock>
-                                        <TextBox Width="240" PasswordChar="&#x2022;" Text="{Binding CurrentPassword, Mode=TwoWay}" />
-                                    </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
-                                        <TextBlock VerticalAlignment="Center" Width="140" Foreground="{DynamicResource TextSecondary}">New password</TextBlock>
-                                        <TextBox Width="240" PasswordChar="&#x2022;" Text="{Binding NewPassword, Mode=TwoWay}" />
-                                    </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
-                                        <TextBlock VerticalAlignment="Center" Width="140" Foreground="{DynamicResource TextSecondary}">Confirm new password</TextBlock>
-                                        <TextBox Width="240" PasswordChar="&#x2022;" Text="{Binding ConfirmNewPassword, Mode=TwoWay}" />
-                                    </StackPanel>
-                                    <TextBlock TextWrapping="Wrap" MaxWidth="400" FontSize="12"
-                                               Foreground="{DynamicResource TextSecondary}"
-                                               Text="Changing your password signs your other devices out. This one stays signed in." />
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
-                                        <Button Command="{Binding SubmitPasswordChangeCommand}"
-                                                Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
-                                                FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
-                                                BorderThickness="1" BorderBrush="{DynamicResource Border}">
-                                            <TextBlock Text="Change password" />
-                                        </Button>
-                                        <Button Command="{Binding ToggleChangePasswordCommand}"
-                                                Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
-                                                FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
-                                                BorderThickness="1" BorderBrush="{DynamicResource Border}">
-                                            <TextBlock Text="Cancel" />
-                                        </Button>
-                                    </StackPanel>
-                                </StackPanel>
-                            </Border>
-                        </StackPanel>
-
-                        <!-- WL-143: the danger zone. Collapsed by default, and it stays that way
-                             until someone deliberately opens it - this is meant to be the hardest
-                             thing in the panel to do by accident, and three separate gates (open
-                             the section, type the address, accept the confirmation) are what makes
-                             it so. -->
-                        <StackPanel Spacing="{DynamicResource SpacingMedium}" IsVisible="{Binding !IsSignedOutOfApi}">
-                            <Button Command="{Binding ToggleDangerZoneCommand}" HorizontalAlignment="Left"
-                                    Background="{DynamicResource Surface}" Foreground="{DynamicResource TextSecondary}"
-                                    FontSize="12" FontWeight="500" Padding="8,5" CornerRadius="7"
-                                    BorderThickness="1" BorderBrush="{DynamicResource Border}">
-                                <TextBlock Text="Delete this account..." />
-                            </Button>
-
-                            <Border IsVisible="{Binding IsDangerZoneOpen}"
-                                    Background="{DynamicResource Surface}" BorderBrush="{DynamicResource RedDanger}"
-                                    BorderThickness="1" CornerRadius="8" Padding="12" HorizontalAlignment="Left">
-                                <StackPanel Spacing="{DynamicResource SpacingMedium}" MaxWidth="480">
-                                    <TextBlock Text="Delete account" FontWeight="600" FontSize="13"
-                                               Foreground="{DynamicResource RedDanger}" />
-                                    <TextBlock TextWrapping="Wrap" FontSize="12" LineHeight="18"
-                                               Foreground="{DynamicResource TextSecondary}"
-                                               Text="This deletes everything the server holds for this account, permanently and immediately. There is no undo. Your projects, tasks and time entries stay on this device - use Export CSV on the Reports tab first if you want a copy somewhere else." />
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
-                                        <TextBlock VerticalAlignment="Center" Width="140" Foreground="{DynamicResource TextSecondary}">Password</TextBlock>
-                                        <TextBox Width="240" PasswordChar="&#x2022;" Text="{Binding DeleteAccountPassword, Mode=TwoWay}" />
-                                    </StackPanel>
-                                    <!-- Typed, not pre-filled. A confirmation you can accept without
-                                         reading is not a confirmation, and this is also the check
-                                         that runs BEFORE anything is sent - so a typo costs nothing
-                                         against the server's failed-password counter. -->
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
-                                        <TextBlock VerticalAlignment="Center" Width="140" Foreground="{DynamicResource TextSecondary}">Type your email</TextBlock>
-                                        <TextBox Width="240" Text="{Binding DeleteAccountConfirmEmail, Mode=TwoWay}"
-                                                 Watermark="{Binding ApiEmail}" />
-                                    </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
-                                        <Button Command="{Binding DeleteAccountCommand}"
-                                                Background="{DynamicResource RedDanger}" Foreground="White"
-                                                FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
-                                                BorderThickness="0">
-                                            <TextBlock Text="Delete account permanently" />
-                                        </Button>
-                                        <Button Command="{Binding ToggleDangerZoneCommand}"
-                                                Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
-                                                FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
-                                                BorderThickness="1" BorderBrush="{DynamicResource Border}">
-                                            <TextBlock Text="Cancel" />
-                                        </Button>
-                                    </StackPanel>
-                                </StackPanel>
-                            </Border>
                         </StackPanel>
 
                         <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">

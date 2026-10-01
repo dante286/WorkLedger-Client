@@ -9,8 +9,8 @@ namespace WorkLedger_Client.ViewModels
     // that can quietly disagree with each other.
     //
     // It is a plain class with no Avalonia in it, deliberately. The rules below are the interesting
-    // part of this plan - which affordances a server allows, when Sign in must be refused, what a
-    // repeated failure is allowed to say - and putting them behind a view model that needs a
+    // part of this plan - when Sign in must be refused, what each auth state says, what a repeated
+    // failure is allowed to say - and putting them behind a view model that needs a
     // dispatcher, a database and a theme service to construct would make them the part nobody tests.
     //
     // The copy here is the PANEL's: persistent, and able to take a sentence to explain itself.
@@ -18,10 +18,6 @@ namespace WorkLedger_Client.ViewModels
     // line is the whole budget. Two surfaces, two registers; keep them in step.
     public sealed class AuthPanelState
     {
-        // Sensible when a server cannot tell us otherwise. Note this is NOT used to validate
-        // anything - see MinPasswordLength - it only exists so a field has a placeholder.
-        public const int UnknownMinPasswordLength = 0;
-
         // Plan 9 item 2a: warn from the third consecutive failure, not from the threshold.
         //
         // The server's FailedLoginCount is per USER, so a phone and a laptop spend one shared
@@ -42,17 +38,6 @@ namespace WorkLedger_Client.ViewModels
         // existing user out of a server whose owner shut the door behind them.
         public bool ShowSignIn => true;
 
-        public bool ShowCreateAccount { get; private init; }
-
-        public bool ShowSignupSecret { get; private init; }
-
-        public bool ShowClaimServer { get; private init; }
-
-        // 0 means "the server has not told us", and in that case nothing is validated locally. A
-        // guessed minimum is worse than none: too high and it refuses a password the server would
-        // have taken, too low and it promises an acceptance it cannot deliver.
-        public int MinPasswordLength { get; private init; }
-
         // Plan 9 item 2: while locked out the Sign in button is DISABLED, not merely discouraged.
         // The server refuses the correct password for the duration, so an enabled button can only
         // produce another 423 and spend the per-IP rate limit that every other device behind this
@@ -64,6 +49,33 @@ namespace WorkLedger_Client.ViewModels
 
         public string StatusMessage { get; private init; } = string.Empty;
 
+        // WL-176, plan 12 item 5. Where this server's web portal lives, exactly as the server
+        // advertised it, or null: a pre-S11 server, one with the portal switched off, or one that
+        // could not be asked. Never guessed from ApiEndpoint - a server that has not advertised a
+        // portal may not have one, and a guessed link that 404s is worse than a sentence.
+        //
+        // Not validated here. PortalLink.ToLaunchableUri is the gate, at the moment of launching,
+        // so a value this client will refuse to open is still visible to anyone diagnosing why.
+        public string? PortalUrl { get; private init; }
+
+        // Signed in, or signed out by the server: both are moments to manage the account rather than
+        // to go and get one. A revoked session especially - the likeliest cause is something done in
+        // the portal, and it is the place to find out which.
+        public bool ShowManageAccount { get; private init; }
+
+        // Every other signed-out state, portal permitting - including a lockout, where the portal is
+        // where a reset link gets redeemed.
+        public bool ShowOpenPortal { get; private init; }
+
+        // The line under the sign-in row for someone who has no account yet. Empty in every other
+        // state, where "no account?" would be answering a question nobody asked.
+        public string PortalHint { get; private init; } = string.Empty;
+
+        // WL-176, plan 12 item 6: "I've reset my password", offered for exactly as long as Sign in is
+        // disabled by a lockout. See SyncCoordinator.ForgetServerVerdict for why the countdown alone
+        // is not enough once a reset can happen somewhere this client cannot see.
+        public bool ShowResetPasswordEscape => IsLockedOut;
+
         public static AuthPanelState From(
             AuthStatus auth,
             AuthCapabilitiesResponse? capabilities,
@@ -72,33 +84,30 @@ namespace WorkLedger_Client.ViewModels
             DateTime? sessionExpiresAtUtc = null)
         {
             var signedIn = auth.State == AuthState.SignedIn;
-
-            // Null capabilities is the normal answer for a server predating the endpoint, or one
-            // that is unreachable right now. It degrades to sign-in only, which keeps such a server
-            // usable instead of presenting an error the user cannot act on.
-            var registrationEnabled = capabilities?.RegistrationEnabled ?? false;
-            var hasUnclaimed = capabilities?.HasUnclaimedAccount ?? false;
+            var portalUrl = string.IsNullOrWhiteSpace(capabilities?.PortalUrl) ? null : capabilities!.PortalUrl!.Trim();
+            var manage = portalUrl is not null && (signedIn || auth.State == AuthState.SessionRevoked);
 
             return new AuthPanelState
             {
                 State = auth.State,
                 IsSignedIn = signedIn,
-
-                // Creating an account while already signed in would be a second identity this
-                // install has nowhere to put - the local database holds exactly one owner.
-                ShowCreateAccount = registrationEnabled && !signedIn,
-                ShowSignupSecret = capabilities?.RegistrationRequiresSecret ?? false,
-
-                // Claim is NOT gated on RegistrationEnabled, here or on the server: an operator who
-                // closed signups must still be able to take ownership of their own existing data.
-                ShowClaimServer = hasUnclaimed && !signedIn,
-
-                MinPasswordLength = capabilities?.MinPasswordLength ?? UnknownMinPasswordLength,
                 IsLockedOut = auth.State == AuthState.LockedOut && !auth.HasLifted,
                 LockedUntilUtc = auth.RetryAfterUtc,
-                StatusMessage = Describe(auth, signedInEmail, displayName, sessionExpiresAtUtc)
+                StatusMessage = Describe(auth, signedInEmail, displayName, sessionExpiresAtUtc),
+                PortalUrl = portalUrl,
+                ShowManageAccount = manage,
+                ShowOpenPortal = portalUrl is not null && !manage,
+                PortalHint = auth.State == AuthState.SignedOut ? DescribeNoAccount(portalUrl) : string.Empty
             };
         }
+
+        // The S11 handoff's point, and the reason this does not say "create an account": the portal
+        // has no open sign-up. An account comes from an administrator's invite (or, on a server that
+        // still accepts it, the operator's signup secret), so suggesting otherwise sends someone to a
+        // page that will turn them away.
+        private static string DescribeNoAccount(string? portalUrl) => portalUrl is null
+            ? "No account? Ask this server's administrator for one."
+            : "No account? Accounts are made on this server's web portal, from an invite its administrator sends you.";
 
         private static string Describe(
             AuthStatus auth, string? email, string? displayName, DateTime? sessionExpiresAtUtc) => auth.State switch
@@ -115,20 +124,26 @@ namespace WorkLedger_Client.ViewModels
                 ? $"Your session expired on {expired.ToLocalTime():g}. Sign in to resume syncing."
                 : "Your session has expired. Sign in to resume syncing.",
 
-            // Plan 9 item 6. The causes are named because a revoked session is otherwise
-            // indistinguishable from a bug, and none of them is guessable from here - the server
-            // does not say which, and asking would leak more than it tells.
+            // Plan 9 item 6, reworded by plan 12 item 5. The causes are named because a revoked
+            // session is otherwise indistinguishable from a bug, and none of them is guessable from
+            // here - the server answers every one with the same bare 401 and asking would leak more
+            // than it tells. Since plan 12 they are the NORMAL path for these actions, which now
+            // happen in a browser, so the web portal is named as a place they come from.
             AuthState.SessionRevoked =>
-                "You've been signed out by the server. That usually means the password was changed, "
-                + "this device was removed from another machine, or the account was deleted. "
+                "You've been signed out of this server. That happens when the password is changed or "
+                + "reset, when this device is removed, when someone signs out everywhere (including "
+                + "from the web portal), or when the account is suspended or deleted. "
                 + "Sign in again to resume syncing - your work is safe on this device.",
 
+            // The countdown lives beside the disabled Sign in button; this is the explanation.
             AuthState.LockedOut =>
                 "Too many failed sign-in attempts, so this account is temporarily locked. "
-                + "The server refuses even the correct password until the lock lifts.",
+                + "The server refuses even the correct password until the lock lifts. "
+                + "If you've forgotten your password, ask an administrator for a reset link.",
 
             // Worded about the address rather than the account: this limiter is per-IP and shared
-            // with registration, so it may have been earned by another device on the same network.
+            // with every credential endpoint, so it may have been earned by another device on the
+            // same network.
             AuthState.RateLimited =>
                 "The server is rate-limiting sign-in attempts from this address. Try again shortly.",
 
@@ -189,67 +204,6 @@ namespace WorkLedger_Client.ViewModels
                 ? $"The next failed attempt may lock the account for {minutes}."
                 : $"At most {remaining} more attempt{(remaining == 1 ? string.Empty : "s")} before the "
                   + $"account locks for {minutes} - and a lock refuses the correct password too.";
-        }
-
-        /// <summary>
-        /// WL-143: the confirmation shown before <c>DELETE /auth/account</c>.
-        /// </summary>
-        /// <remarks>
-        /// <b>The order of the four statements is the specification, not a preference.</b> Someone
-        /// reading a destructive confirmation reads the top of it and skims the rest, so the two
-        /// facts that cannot be recovered from - it is immediate, and there is no undo - go first,
-        /// while the reassurance goes after them. Putting "your local data is kept" first would
-        /// have people stop reading at the reassurance and miss that the server's copy goes
-        /// permanently.
-        /// <list type="number">
-        /// <item><description>The server's copy is deleted permanently and immediately.</description></item>
-        /// <item><description>There is no undo - no grace period exists server-side.</description></item>
-        /// <item><description>Local data on this device is kept.</description></item>
-        /// <item><description>The Reports tab's CSV export is how to keep a copy elsewhere.</description></item>
-        /// </list>
-        /// The fourth is the honest answer to "can I take my data with me first?" and it points at
-        /// something already in the app. The server's <c>/reports/*?format=csv</c> is deliberately
-        /// not offered instead: this client does not consume the server's report endpoints at all,
-        /// and building a second export path against an account that is about to stop existing
-        /// would be the worst moment to introduce one.
-        /// </remarks>
-        public static string DescribeAccountDeletion(string? email)
-        {
-            var who = string.IsNullOrWhiteSpace(email) ? "this account" : email.Trim();
-
-            return $"Delete {who} from the server?\n\n"
-                   + "Everything the server holds for this account - every project, task, time entry "
-                   + "and device - is deleted permanently and immediately.\n\n"
-                   + "There is no undo. The server keeps no copy and has no grace period.\n\n"
-                   + "Your work on THIS device is kept. Nothing local is deleted: every project, "
-                   + "task and time entry stays exactly where it is, and the app keeps working "
-                   + "offline. Sync is switched off, because there will be no account to sync with.\n\n"
-                   + "To keep a copy somewhere else, cancel and use Export CSV on the Reports tab "
-                   + "first.";
-        }
-
-        /// <summary>
-        /// Client-side validation for a new password. Null when it is acceptable.
-        /// </summary>
-        /// <remarks>
-        /// Length only, and only when the server has stated a minimum. The server deliberately has
-        /// no composition rules (NIST 800-63B: length is the control that matters), and a client
-        /// demanding a symbol would make a password the server would have accepted un-typeable.
-        /// </remarks>
-        public static string? ValidateNewPassword(string? password, string? confirmation, int minPasswordLength)
-        {
-            password ??= string.Empty;
-
-            if (password.Length == 0)
-                return "Enter a password.";
-
-            if (!string.Equals(password, confirmation, StringComparison.Ordinal))
-                return "The two passwords don't match.";
-
-            if (minPasswordLength > 0 && password.Length < minPasswordLength)
-                return $"This server requires at least {minPasswordLength} characters.";
-
-            return null;
         }
     }
 }

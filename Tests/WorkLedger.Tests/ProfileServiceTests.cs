@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using WorkLedger_Client.Models;
 using WorkLedger_Client.Services;
+using WorkLedger_Client.Sync;
 using Xunit;
 
 namespace WorkLedger.Tests
@@ -420,6 +421,143 @@ namespace WorkLedger.Tests
 
             Assert.Equal(deviceId, install.Settings.DeviceId);
             Assert.Equal(deviceId, install.SettingsService.LoadSettings().DeviceId);
+        }
+
+        // ------------------------------------------- WL-176: "I've reset my password" (plan 12 item 6)
+
+        [Fact]
+        public async Task ForgetServerVerdict_AfterALockout_SendsNothing_AndTheNewPasswordSignsInFirstTime()
+        {
+            // The trap the button exists for: the account locked itself out, its owner reset the
+            // password in the web portal - which clears the server's counters - and came back to an
+            // app still holding a LockedOut verdict that would keep Sign in disabled for the rest of
+            // the window.
+            var install = await NewInstallAsync();
+            Assert.True((await install.SignInAsync(42, "owner@example.com")).Success);
+            var profileId = install.Profiles.ActiveProfile.Id;
+
+            var handler = new ApiSyncProviderTests.RecordingHandler()
+                .EnqueueRaw(HttpStatusCode.Locked, "{}")
+                .EnqueueJson(HttpStatusCode.OK, new
+                {
+                    Token = "token-after-reset",
+                    ExpiresAtUtc = DateTime.UtcNow.AddDays(365),
+                    User = new { Id = 42, Email = "owner@example.com", DisplayName = (string?)null, CreatedAtUtc = DateTime.UtcNow }
+                });
+
+            using var coordinator = new SyncCoordinator(
+                install.Db, install.SettingsService, install.Settings, new HttpClient(handler), install.Profiles);
+
+            Assert.False((await coordinator.SignInAsync("owner@example.com", "the forgotten password")).Success);
+            Assert.Equal(AuthState.LockedOut, coordinator.ApiAuth.State);
+            Assert.Single(handler.Requests);
+
+            Assert.True(coordinator.ForgetServerVerdict());
+
+            // Sends nothing - not a login, not a whoami. It only re-enables Sign in.
+            Assert.Single(handler.Requests);
+            Assert.NotEqual(AuthState.LockedOut, coordinator.ApiAuth.State);
+
+            // A reset rotates the security stamp, so the token held from before is dead and is not
+            // kept around to be mistaken for a working session.
+            Assert.Equal(string.Empty, install.Settings.ApiToken);
+
+            // And the new password works on the first attempt: exactly one more request, a login.
+            Assert.True((await coordinator.SignInAsync("owner@example.com", "the new password")).Success);
+            Assert.Equal(2, handler.Requests.Count);
+            Assert.All(handler.Requests, request => Assert.Equal("/auth/login", request.Uri.AbsolutePath));
+            Assert.Equal("token-after-reset", install.Settings.ApiToken);
+
+            // Not a profile event: the account and its database are the same, only the credential
+            // changed.
+            Assert.Equal(profileId, install.Profiles.ActiveProfile.Id);
+        }
+
+        // ----------------------------------------------- WL-176: Detach from account (plan 12 item 7)
+
+        [Fact]
+        public async Task DetachFromAccount_KeepsEveryRow_AndTheNextSignInTakesTheDataOverInPlace()
+        {
+            // An account deleted in the web portal. This install never hears about it, so its stamp
+            // and registry entry keep naming an account that no longer exists.
+            var install = await NewInstallAsync();
+            await install.Db.SaveProjectAsync(new Project { Name = "Work from a deleted account" });
+            Assert.True((await install.SignInAsync(42, "gone@example.com")).Success);
+            install.Coordinator.SignOut();
+
+            var projects = (await install.Db.GetAllAsync<Project>()).Count;
+            var queued = (await install.Db.GetAllAsync<SyncQueue>()).Count;
+            var profileId = install.Profiles.ActiveProfile.Id;
+            var profileCount = install.Profiles.Profiles.Count;
+
+            var detached = await install.Coordinator.DetachFromAccountAsync();
+            Assert.True(detached.Success);
+
+            // Both halves: the stamp reads as Unclaimed and the registry entry names nobody.
+            Assert.False((await install.Db.GetDatabaseOwnerAsync())?.HasIdentity ?? false);
+            Assert.False(install.Profiles.ActiveProfile.HasIdentity);
+
+            // Not one row touched, the unsent queue included - it is what the next account wants.
+            Assert.Equal(projects, (await install.Db.GetAllAsync<Project>()).Count);
+            Assert.Equal(queued, (await install.Db.GetAllAsync<SyncQueue>()).Count);
+
+            // The account-scoped settings belonged to the account being forgotten.
+            Assert.Equal(string.Empty, install.Settings.ApiEmail);
+            Assert.Null(install.Settings.LastSyncedAtUtc);
+
+            // The same person re-registers in the portal and gets a new UserId. Their data is
+            // adopted where it is: no new profile, no switch, nothing stranded.
+            Assert.True((await install.SignInAsync(77, "gone@example.com")).Success);
+
+            Assert.Equal(profileId, install.Profiles.ActiveProfile.Id);
+            Assert.Equal(profileCount, install.Profiles.Profiles.Count);
+            Assert.Equal(77, install.Profiles.ActiveProfile.UserId);
+            Assert.Equal("Work from a deleted account", Assert.Single(await install.Db.GetAllAsync<Project>()).Name);
+        }
+
+        [Fact]
+        public async Task ReleasingOnlyTheStamp_StillStrandsTheData_WhichIsWhyDetachDoesBoth()
+        {
+            // The reason ProfileService.ReleaseActiveProfile exists. With the database unclaimed but
+            // the registry still naming the old account, the sign-in rule does not adopt in place -
+            // it creates a fresh profile, and the old work is left behind in the one it came from.
+            var install = await NewInstallAsync();
+            await install.Db.SaveProjectAsync(new Project { Name = "Stranded work" });
+            Assert.True((await install.SignInAsync(42, "gone@example.com")).Success);
+            install.Coordinator.SignOut();
+            var profileId = install.Profiles.ActiveProfile.Id;
+
+            await install.Db.ReleaseDatabaseOwnerAsync();
+            Assert.True((await install.SignInAsync(77, "gone@example.com")).Success);
+
+            Assert.NotEqual(profileId, install.Profiles.ActiveProfile.Id);
+            Assert.Empty(await install.Db.GetAllAsync<Project>());
+        }
+
+        [Fact]
+        public async Task DetachFromAccount_IsRefusedWhileSignedIn()
+        {
+            // Signed in, detaching would contradict the session in hand.
+            var install = await NewInstallAsync();
+            Assert.True((await install.SignInAsync(42, "owner@example.com")).Success);
+
+            var detached = await install.Coordinator.DetachFromAccountAsync();
+
+            Assert.False(detached.Success);
+            Assert.Equal(42, (await install.Db.GetDatabaseOwnerAsync())!.UserId);
+            Assert.True(install.Profiles.ActiveProfile.HasIdentity);
+            Assert.Equal("issued-token", install.Settings.ApiToken);
+        }
+
+        [Fact]
+        public async Task DetachFromAccount_OnDataThatWasNeverAttached_SaysSoAndChangesNothing()
+        {
+            var install = await NewInstallAsync();
+
+            var detached = await install.Coordinator.DetachFromAccountAsync();
+
+            Assert.False(detached.Success);
+            Assert.Null(await install.Db.GetDatabaseOwnerAsync());
         }
 
         // ------------------------------------------------------------------- harness
