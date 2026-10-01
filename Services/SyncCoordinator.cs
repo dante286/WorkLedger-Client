@@ -589,6 +589,126 @@ namespace WorkLedger_Client.Services
             ApplyConfiguration();
         }
 
+        /// <summary>
+        /// "I've reset my password": forgets this server's lockout verdict so Sign in is usable
+        /// again. WL-176, plan 12 item 6. <b>Sends nothing.</b>
+        /// </summary>
+        /// <remarks>
+        /// The server clears its failed-login counters when a reset is redeemed, but this install
+        /// cannot see that happen - the reset is done in a browser - and the provider holds its
+        /// <c>LockedOut</c> verdict until the <c>Retry-After</c> lapses. Since
+        /// <see cref="EnsureApiProvider"/> caches that instance by endpoint, Sign in would stay
+        /// disabled for up to <c>Auth:LockoutMinutes</c> against a server that would accept the new
+        /// password now. The user is the only one who knows better than the countdown, so this is
+        /// theirs to press.
+        /// <para>
+        /// It drops the cached provider exactly as <see cref="OnProfileChangedAsync"/> does, and
+        /// borrows nothing else from the profile machinery: the account and its database are the
+        /// same, only the credential changed. It also discards any token this install still holds,
+        /// because a reset rotates the account's security stamp and every existing token died with
+        /// it. Keeping a dead one would make the panel read it as "signed in", and the next refresh
+        /// would spend a request finding out otherwise.
+        /// </para>
+        /// <para>
+        /// <b>Invariant L is untouched.</b> It bounds unattended attempts, and with no token the
+        /// timer has nothing to run against - the next request is the user's own sign-in with the
+        /// password they just chose. If the account is in fact still locked, that is answered with
+        /// 423 again and the verdict comes straight back: one user-initiated attempt per press.
+        /// </para>
+        /// Returns false, and changes nothing, unless a lockout is actually showing.
+        /// </remarks>
+        public bool ForgetServerVerdict()
+        {
+            if (ApiAuth.State != AuthState.LockedOut)
+                return false;
+
+            _apiProvider = null;
+            _apiProviderEndpoint = string.Empty;
+            ResetSignInFailures();
+
+            SignOut();
+            return true;
+        }
+
+        /// <summary>
+        /// "Detach from account": forgets which server account this profile's data belonged to,
+        /// keeping every row of it. WL-176, plan 12 item 7.
+        /// </summary>
+        /// <remarks>
+        /// The user-invoked replacement for WL-143's automatic release. When an account is deleted
+        /// (or abandoned) in the web portal this install never hears about it, and the
+        /// <c>DatabaseOwner</c> stamp keeps naming an account that no longer exists - so the next
+        /// sign-in, even the same person re-registering with the same email and getting a new
+        /// <c>UserId</c>, is routed to a brand new profile and the old work is stranded.
+        /// <para>
+        /// <b>Both halves are required.</b> <see cref="SwitchProfileForSignInAsync"/> adopts in place
+        /// only when the database is unclaimed <i>and</i> its profile belongs to nobody; release the
+        /// stamp alone and the registry entry still names the old account, and a new profile is
+        /// created anyway. The registry half is a named method rather than a change to
+        /// <c>ProfileService.ReconcileActiveProfileAsync</c>, which deliberately leaves an entry
+        /// alone when the stamp has no identity - widening that would change what restoring an
+        /// unstamped backup does to an account's profile.
+        /// </para>
+        /// <para>
+        /// <b>Signed out only, active profile only.</b> Signed in, it would contradict the session in
+        /// hand; another profile would need a database switch, and the user can switch first. The
+        /// account-scoped settings are cleared with it - the email, the token and the pull cursor all
+        /// belonged to the account being forgotten, exactly the fields WL-143 cleared.
+        /// </para>
+        /// <para>
+        /// <b>Not one project, task, entry or <c>SyncQueue</c> row is touched.</b> The unsent queue
+        /// is exactly what the next account will want pushed.
+        /// </para>
+        /// </remarks>
+        public async Task<(bool Success, string Message)> DetachFromAccountAsync()
+        {
+            if (ApiAuth.State == AuthState.SignedIn)
+                return (false, "Sign out first - this data is still attached to the account you're signed in with.");
+
+            try
+            {
+                var owner = await _db.GetDatabaseOwnerAsync();
+                var stamped = owner?.HasIdentity ?? false;
+                var registered = _profiles?.ActiveProfile.HasIdentity ?? false;
+
+                if (!stamped && !registered)
+                    return (false, "This data isn't attached to an account, so there's nothing to detach.");
+
+                // The authoritative half first. If anything after it fails, the database already
+                // reads as Unclaimed, and ReconcileActiveProfileAsync never re-stamps a registry entry
+                // from a stamp with no identity - so a half-done detach errs towards adoptable.
+                await _db.ReleaseDatabaseOwnerAsync();
+                _profiles?.ReleaseActiveProfile();
+
+                // Whatever this endpoint's provider last concluded - a revocation, most likely, if
+                // the account was deleted - was about the account that is being forgotten.
+                _apiProvider = null;
+                _apiProviderEndpoint = string.Empty;
+                ResetSignInFailures();
+
+                _settings.ApiEmail = string.Empty;
+                _settings.ApiToken = string.Empty;
+                _settings.ApiTokenExpiresAtUtc = null;
+
+                // Account-scoped state in a profile field, nulled for the reason adoption nulls it:
+                // a cursor from the old account means nothing to whichever account comes next.
+                _settings.LastSyncedAtUtc = null;
+                _settingsService.SaveSettings(_settings);
+
+                _builtForConfiguration = string.Empty;
+                ApplyConfiguration();
+
+                return (true,
+                    "Detached. Your projects, tasks and entries are all still here; the next account "
+                    + "you sign in with will take them over and sync them to its server.");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Detach from account failed: {ex.Message}");
+                return (false, $"Couldn't detach this data from its account: {ex.Message}");
+            }
+        }
+
         // WL-146 item 2a. Counted per email, so switching accounts starts a fresh count - the
         // server's budget is per user too, and carrying one email's failures onto another would
         // warn about a threshold that address is nowhere near.

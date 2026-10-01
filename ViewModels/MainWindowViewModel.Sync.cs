@@ -93,6 +93,21 @@ namespace WorkLedger_Client.ViewModels
         [ObservableProperty]
         private bool _isSignedOutOfApi;
 
+        // WL-176, plan 12 item 5: the panel's links to the server's web portal, which is where every
+        // account operation lives now. Projected from AuthPanelState like everything else here.
+        [ObservableProperty]
+        private bool _showManageAccount;
+
+        [ObservableProperty]
+        private bool _showOpenPortal;
+
+        [ObservableProperty]
+        private string _portalHint = string.Empty;
+
+        // Plan 12 item 6: "I've reset my password", visible exactly while a lockout disables Sign in.
+        [ObservableProperty]
+        private bool _showResetPasswordEscape;
+
         [ObservableProperty]
         private bool _isSyncing;
 
@@ -103,6 +118,10 @@ namespace WorkLedger_Client.ViewModels
         // What the server last said it allows. Null until probed, and null is a legitimate settled
         // answer too - a server predating /auth/capabilities, or one that is unreachable.
         private AuthCapabilitiesResponse? _capabilities;
+
+        // The portal address from the last panel projection, exactly as the server advertised it.
+        // Checked by PortalLink at the moment of launching, never before.
+        private string? _portalUrl;
 
         // Ticks only while locked out, to run the countdown down and re-enable Sign in at the
         // instant the server would start accepting attempts again.
@@ -209,6 +228,69 @@ namespace WorkLedger_Client.ViewModels
         // device behind this address.
         private bool CanAttemptSignIn() => !IsLockedOut;
 
+        /// <summary>
+        /// Opens the server's web portal in the system browser. WL-176, plan 12 item 5.
+        /// </summary>
+        /// <remarks>
+        /// Behind both "Open web portal" and "Manage account": the portal's entry point is the only
+        /// path the server promises, and it sends an anonymous browser to sign in and a signed-in one
+        /// to account home. The system browser rather than an embedded one, because that is where
+        /// password managers and existing sessions live.
+        /// <para>
+        /// The URL is the server's, so it passes <see cref="PortalLink.ToLaunchableUri"/> first and
+        /// anything that fails is refused with a message - never handed to the OS shell, and never
+        /// an exception.
+        /// </para>
+        /// </remarks>
+        [RelayCommand]
+        private async Task OpenPortalAsync()
+        {
+            var uri = PortalLink.ToLaunchableUri(_portalUrl);
+            if (uri is null)
+            {
+                _toastService?.ShowToast(_portalUrl is null
+                    ? "This server hasn't said where its web portal is."
+                    : "This server's portal address isn't a secure web link, so it won't be opened.", 4500);
+                return;
+            }
+
+            var desktop = Avalonia.Application.Current?.ApplicationLifetime
+                as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime;
+
+            if (desktop?.MainWindow is not { } window)
+                return;
+
+            try
+            {
+                if (!await window.Launcher.LaunchUriAsync(uri))
+                    _toastService?.ShowToast($"Couldn't open a browser. The portal is at {uri}", 6000);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Opening the portal failed: {ex.Message}");
+                _toastService?.ShowToast($"Couldn't open a browser. The portal is at {uri}", 6000);
+            }
+        }
+
+        /// <summary>
+        /// "I've reset my password". WL-176, plan 12 item 6. Sends nothing.
+        /// </summary>
+        /// <remarks>
+        /// Only re-enables Sign in - see <c>SyncCoordinator.ForgetServerVerdict</c>. The re-render is
+        /// <see cref="RefreshSyncStatus"/>, deliberately not <see cref="RefreshAuthPanelAsync"/>: the
+        /// promise is that pressing this makes no request, and the next one the server sees is the
+        /// user's own sign-in with the password they just chose.
+        /// </remarks>
+        [RelayCommand]
+        private void ForgetLockout()
+        {
+            var forgotten = _syncCoordinator.ForgetServerVerdict();
+            RefreshSyncStatus();
+
+            if (forgotten)
+                _toastService?.ShowToast("Sign in with your new password.", 3500);
+        }
+
         // For any Settings action that needs a titled confirmation with its own wording. Returns
         // false when there is no window to parent a dialog to, which is the safe answer: no
         // confirmation, no action.
@@ -292,6 +374,12 @@ namespace WorkLedger_Client.ViewModels
         {
             IsSignedOutOfApi = !panel.IsSignedIn;
             ApiTokenStatus = panel.StatusMessage;
+
+            _portalUrl = panel.PortalUrl;
+            ShowManageAccount = panel.ShowManageAccount;
+            ShowOpenPortal = panel.ShowOpenPortal;
+            PortalHint = panel.PortalHint;
+            ShowResetPasswordEscape = panel.ShowResetPasswordEscape;
 
             SignInWarning = AuthPanelState.DescribeRepeatedFailureWarning(
                 _syncCoordinator.ConsecutiveFailedSignIns, _capabilities);

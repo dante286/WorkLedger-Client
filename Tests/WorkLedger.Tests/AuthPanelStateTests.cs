@@ -22,8 +22,12 @@ namespace WorkLedger.Tests
             int minPasswordLength = 12,
             bool hasUnclaimedAccount = false,
             int maxFailedLogins = 5,
-            int lockoutMinutes = 15)
-            => new(registrationEnabled, requiresSecret, minPasswordLength, hasUnclaimedAccount, maxFailedLogins, lockoutMinutes);
+            int lockoutMinutes = 15,
+            string? portalUrl = null)
+            => new(registrationEnabled, requiresSecret, minPasswordLength, hasUnclaimedAccount, maxFailedLogins, lockoutMinutes,
+                PortalUrl: portalUrl);
+
+        private const string Portal = "https://ledger.example.com/portal";
 
         // ------------------------------------------------------------------ sign-in is unconditional
 
@@ -71,6 +75,122 @@ namespace WorkLedger.Tests
             Assert.Equal(string.Empty, AuthPanelState.DescribeLockoutCountdown(lifted, DateTime.UtcNow));
         }
 
+        // WL-176, plan 12 item 6. "I've reset my password" exists to undo exactly one thing - a
+        // lockout verdict a reset elsewhere has made stale - so it is offered for exactly as long as
+        // that verdict is disabling Sign in, and at no other time.
+        [Fact]
+        public void TheResetEscape_IsOfferedOnlyWhileLockedOut()
+        {
+            Assert.True(AuthPanelState.From(
+                AuthStatus.LockedOut(DateTime.UtcNow.AddMinutes(15)), Capabilities(portalUrl: Portal), Email)
+                .ShowResetPasswordEscape);
+
+            // A lockout with no Retry-After still disables Sign in, so it still gets the way out.
+            Assert.True(AuthPanelState.From(AuthStatus.LockedOut(null), Capabilities(), Email).ShowResetPasswordEscape);
+
+            var notLocked = new[]
+            {
+                AuthStatus.LockedOut(DateTime.UtcNow.AddSeconds(-1)), // lifted by itself
+                AuthStatus.SignedOut, AuthStatus.SignedIn, AuthStatus.SessionExpired,
+                AuthStatus.SessionRevoked, AuthStatus.RateLimited(DateTime.UtcNow.AddMinutes(1))
+            };
+
+            foreach (var status in notLocked)
+                Assert.False(AuthPanelState.From(status, Capabilities(portalUrl: Portal), Email).ShowResetPasswordEscape);
+        }
+
+        // ------------------------------------------------------------ the web portal (plan 12)
+
+        [Fact]
+        public void PortalUrl_ComesFromTheCapabilities_ExactlyAsAdvertised()
+        {
+            var panel = AuthPanelState.From(AuthStatus.SignedOut, Capabilities(portalUrl: Portal), Email);
+
+            Assert.Equal(Portal, panel.PortalUrl);
+        }
+
+        [Fact]
+        public void PortalUrl_IsNull_WhenThereAreNoCapabilities()
+        {
+            // An unreachable server, or one predating /auth/capabilities.
+            var panel = AuthPanelState.From(AuthStatus.SignedOut, capabilities: null, signedInEmail: Email);
+
+            Assert.Null(panel.PortalUrl);
+            Assert.False(panel.ShowOpenPortal);
+            Assert.False(panel.ShowManageAccount);
+        }
+
+        [Fact]
+        public void PortalUrl_IsNull_FromAPreS11Server()
+        {
+            // The six-field construction a pre-S11 response deserializes to - PortalUrl defaulted.
+            var preS11 = new AuthCapabilitiesResponse(true, true, 12, false, 5, 15);
+            var panel = AuthPanelState.From(AuthStatus.SignedOut, preS11, Email);
+
+            Assert.Null(panel.PortalUrl);
+            Assert.False(panel.ShowOpenPortal);
+
+            // A blank value is no portal either, rather than a button that opens nothing.
+            Assert.Null(AuthPanelState.From(AuthStatus.SignedOut, Capabilities(portalUrl: "  "), Email).PortalUrl);
+        }
+
+        [Fact]
+        public void SignedOut_WithAPortal_SaysAccountsComeFromItsInvites_AndOffersToOpenIt()
+        {
+            var panel = AuthPanelState.From(AuthStatus.SignedOut, Capabilities(portalUrl: Portal), Email);
+
+            Assert.True(panel.ShowOpenPortal);
+            Assert.False(panel.ShowManageAccount);
+            Assert.Contains("web portal", panel.PortalHint);
+
+            // The S11 handoff's point: the portal has no open sign-up, so the copy must not promise
+            // one. An account comes from an administrator's invite.
+            Assert.Contains("invite", panel.PortalHint);
+        }
+
+        [Fact]
+        public void SignedOut_WithoutAPortal_PointsAtTheAdministrator_AndOffersNoButton()
+        {
+            var panel = AuthPanelState.From(AuthStatus.SignedOut, Capabilities(), Email);
+
+            Assert.False(panel.ShowOpenPortal);
+            Assert.False(panel.ShowManageAccount);
+            Assert.Contains("administrator", panel.PortalHint);
+            Assert.DoesNotContain("portal", panel.PortalHint);
+        }
+
+        [Fact]
+        public void SignedIn_OffersManageAccount_AndNoNoAccountHint()
+        {
+            var panel = AuthPanelState.From(AuthStatus.SignedIn, Capabilities(portalUrl: Portal), Email);
+
+            Assert.True(panel.ShowManageAccount);
+            Assert.False(panel.ShowOpenPortal);
+            Assert.Equal(string.Empty, panel.PortalHint);
+        }
+
+        [Fact]
+        public void ARevokedSession_OffersManageAccount()
+        {
+            // The likeliest cause of a revocation now is something done in the portal - a password
+            // change, this device removed - and the portal is where to find out which.
+            var panel = AuthPanelState.From(AuthStatus.SessionRevoked, Capabilities(portalUrl: Portal), Email);
+
+            Assert.True(panel.ShowManageAccount);
+            Assert.False(panel.ShowOpenPortal);
+            Assert.Equal(string.Empty, panel.PortalHint);
+        }
+
+        [Fact]
+        public void ALockout_StillOffersThePortal_WhereAResetLinkIsRedeemed()
+        {
+            var panel = AuthPanelState.From(
+                AuthStatus.LockedOut(DateTime.UtcNow.AddMinutes(15)), Capabilities(portalUrl: Portal), Email);
+
+            Assert.True(panel.ShowOpenPortal);
+            Assert.True(panel.ShowResetPasswordEscape);
+        }
+
         // -------------------------------------------------------------- one message per state
 
         [Fact]
@@ -97,8 +217,15 @@ namespace WorkLedger.Tests
 
             // Plan 9 item 6: name the plausible causes, because a revoked session is otherwise
             // indistinguishable from a bug - and reassure, because the local work is untouched.
-            Assert.Contains("removed from another machine", revoked.StatusMessage);
+            // Plan 12 item 5: these are now the normal path for account changes made in a browser,
+            // so the copy names the reset and the web portal as well.
+            Assert.Contains("this device is removed", revoked.StatusMessage);
+            Assert.Contains("reset", revoked.StatusMessage);
+            Assert.Contains("web portal", revoked.StatusMessage);
             Assert.Contains("your work is safe on this device", revoked.StatusMessage, StringComparison.OrdinalIgnoreCase);
+
+            // And the lockout points at the only way out of a forgotten password.
+            Assert.Contains("reset link", locked.StatusMessage);
 
             // The rate limit is about the address, not the account - it may have been earned by a
             // different device on the same network.

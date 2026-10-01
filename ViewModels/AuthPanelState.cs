@@ -49,6 +49,33 @@ namespace WorkLedger_Client.ViewModels
 
         public string StatusMessage { get; private init; } = string.Empty;
 
+        // WL-176, plan 12 item 5. Where this server's web portal lives, exactly as the server
+        // advertised it, or null: a pre-S11 server, one with the portal switched off, or one that
+        // could not be asked. Never guessed from ApiEndpoint - a server that has not advertised a
+        // portal may not have one, and a guessed link that 404s is worse than a sentence.
+        //
+        // Not validated here. PortalLink.ToLaunchableUri is the gate, at the moment of launching,
+        // so a value this client will refuse to open is still visible to anyone diagnosing why.
+        public string? PortalUrl { get; private init; }
+
+        // Signed in, or signed out by the server: both are moments to manage the account rather than
+        // to go and get one. A revoked session especially - the likeliest cause is something done in
+        // the portal, and it is the place to find out which.
+        public bool ShowManageAccount { get; private init; }
+
+        // Every other signed-out state, portal permitting - including a lockout, where the portal is
+        // where a reset link gets redeemed.
+        public bool ShowOpenPortal { get; private init; }
+
+        // The line under the sign-in row for someone who has no account yet. Empty in every other
+        // state, where "no account?" would be answering a question nobody asked.
+        public string PortalHint { get; private init; } = string.Empty;
+
+        // WL-176, plan 12 item 6: "I've reset my password", offered for exactly as long as Sign in is
+        // disabled by a lockout. See SyncCoordinator.ForgetServerVerdict for why the countdown alone
+        // is not enough once a reset can happen somewhere this client cannot see.
+        public bool ShowResetPasswordEscape => IsLockedOut;
+
         public static AuthPanelState From(
             AuthStatus auth,
             AuthCapabilitiesResponse? capabilities,
@@ -56,15 +83,31 @@ namespace WorkLedger_Client.ViewModels
             string? displayName = null,
             DateTime? sessionExpiresAtUtc = null)
         {
+            var signedIn = auth.State == AuthState.SignedIn;
+            var portalUrl = string.IsNullOrWhiteSpace(capabilities?.PortalUrl) ? null : capabilities!.PortalUrl!.Trim();
+            var manage = portalUrl is not null && (signedIn || auth.State == AuthState.SessionRevoked);
+
             return new AuthPanelState
             {
                 State = auth.State,
-                IsSignedIn = auth.State == AuthState.SignedIn,
+                IsSignedIn = signedIn,
                 IsLockedOut = auth.State == AuthState.LockedOut && !auth.HasLifted,
                 LockedUntilUtc = auth.RetryAfterUtc,
-                StatusMessage = Describe(auth, signedInEmail, displayName, sessionExpiresAtUtc)
+                StatusMessage = Describe(auth, signedInEmail, displayName, sessionExpiresAtUtc),
+                PortalUrl = portalUrl,
+                ShowManageAccount = manage,
+                ShowOpenPortal = portalUrl is not null && !manage,
+                PortalHint = auth.State == AuthState.SignedOut ? DescribeNoAccount(portalUrl) : string.Empty
             };
         }
+
+        // The S11 handoff's point, and the reason this does not say "create an account": the portal
+        // has no open sign-up. An account comes from an administrator's invite (or, on a server that
+        // still accepts it, the operator's signup secret), so suggesting otherwise sends someone to a
+        // page that will turn them away.
+        private static string DescribeNoAccount(string? portalUrl) => portalUrl is null
+            ? "No account? Ask this server's administrator for one."
+            : "No account? Accounts are made on this server's web portal, from an invite its administrator sends you.";
 
         private static string Describe(
             AuthStatus auth, string? email, string? displayName, DateTime? sessionExpiresAtUtc) => auth.State switch
@@ -81,20 +124,26 @@ namespace WorkLedger_Client.ViewModels
                 ? $"Your session expired on {expired.ToLocalTime():g}. Sign in to resume syncing."
                 : "Your session has expired. Sign in to resume syncing.",
 
-            // Plan 9 item 6. The causes are named because a revoked session is otherwise
-            // indistinguishable from a bug, and none of them is guessable from here - the server
-            // does not say which, and asking would leak more than it tells.
+            // Plan 9 item 6, reworded by plan 12 item 5. The causes are named because a revoked
+            // session is otherwise indistinguishable from a bug, and none of them is guessable from
+            // here - the server answers every one with the same bare 401 and asking would leak more
+            // than it tells. Since plan 12 they are the NORMAL path for these actions, which now
+            // happen in a browser, so the web portal is named as a place they come from.
             AuthState.SessionRevoked =>
-                "You've been signed out by the server. That usually means the password was changed, "
-                + "this device was removed from another machine, or the account was deleted. "
+                "You've been signed out of this server. That happens when the password is changed or "
+                + "reset, when this device is removed, when someone signs out everywhere (including "
+                + "from the web portal), or when the account is suspended or deleted. "
                 + "Sign in again to resume syncing - your work is safe on this device.",
 
+            // The countdown lives beside the disabled Sign in button; this is the explanation.
             AuthState.LockedOut =>
                 "Too many failed sign-in attempts, so this account is temporarily locked. "
-                + "The server refuses even the correct password until the lock lifts.",
+                + "The server refuses even the correct password until the lock lifts. "
+                + "If you've forgotten your password, ask an administrator for a reset link.",
 
             // Worded about the address rather than the account: this limiter is per-IP and shared
-            // with registration, so it may have been earned by another device on the same network.
+            // with every credential endpoint, so it may have been earned by another device on the
+            // same network.
             AuthState.RateLimited =>
                 "The server is rate-limiting sign-in attempts from this address. Try again shortly.",
 

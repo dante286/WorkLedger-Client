@@ -173,6 +173,35 @@ namespace WorkLedger_Client.Services
         }
 
         /// <summary>
+        /// Records that the active profile no longer belongs to any account. WL-176, plan 12 item 7.
+        /// </summary>
+        /// <remarks>
+        /// The registry half of "Detach from account", and the exact inverse of
+        /// <see cref="AdoptActiveProfile"/>. The database half is
+        /// <c>LocalDbService.ReleaseDatabaseOwnerAsync</c>, and the caller does both: a sign-in adopts
+        /// in place only when the stamp is unclaimed <i>and</i> the profile has no identity.
+        /// <para>
+        /// Deliberately a method of its own rather than a widening of
+        /// <see cref="ReconcileActiveProfileAsync"/>, which leaves an entry alone when the stamp has
+        /// no identity. That early return runs at startup and after every switch, and changing it
+        /// would change what restoring an unstamped backup does to an account's profile.
+        /// </para>
+        /// The profile keeps its Id, for the reason <see cref="AdoptActiveProfile"/> gives.
+        /// </remarks>
+        public Profile ReleaseActiveProfile()
+        {
+            var profile = _registry.Active;
+
+            profile.UserId = null;
+            profile.Email = null;
+            profile.ApiEndpoint = null;
+            profile.LastUsedAtUtc = DateTime.UtcNow;
+
+            SaveRegistry();
+            return profile;
+        }
+
+        /// <summary>
         /// Corrects the active profile's registry entry from the database's own ownership stamp.
         /// WL-148's one invariant.
         /// </summary>

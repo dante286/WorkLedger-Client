@@ -308,6 +308,31 @@ namespace WorkLedger.Tests
             Assert.NotNull(await _alpha.Db.GetDatabaseOwnerAsync());
         }
 
+        // ------------------------------------------------- WL-176: "I've reset my password"
+
+        [Fact]
+        public void ForgetServerVerdict_WithoutALockout_ChangesNothingAndSendsNothing()
+        {
+            // It discards the stored token, which is right after a reset and wrong at any other
+            // time - so outside a lockout it must refuse rather than quietly sign a working session
+            // out. A handler with nothing scripted throws if anything at all is sent.
+            _alpha.Settings.SyncMode = SyncMode.Api;
+            _alpha.Settings.ApiEndpoint = ApiEndpoint;
+            _alpha.Settings.ApiToken = "live-token";
+            _alpha.Settings.ApiTokenExpiresAtUtc = DateTime.UtcNow.AddDays(30);
+            _alpha.SettingsService.SaveSettings(_alpha.Settings);
+
+            var handler = new ApiSyncProviderTests.RecordingHandler();
+            using var coordinator = new SyncCoordinator(
+                _alpha.Db, _alpha.SettingsService, _alpha.Settings, new HttpClient(handler));
+
+            Assert.False(coordinator.ForgetServerVerdict());
+
+            Assert.Equal("live-token", _alpha.Settings.ApiToken);
+            Assert.True(coordinator.ApiAuth.CanSync);
+            Assert.Empty(handler.Requests);
+        }
+
         // -------------------------------------------- WL-146: rejected sign-ins and capabilities
 
         // The server answers unknown email, wrong password and a credential-less legacy account with

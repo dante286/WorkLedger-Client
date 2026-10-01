@@ -623,6 +623,16 @@
                     <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
                         <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0">Active profile</TextBlock>
                         <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource TextPrimary}" Text="{Binding ActiveProfileName}" />
+                        <!-- WL-176, plan 12 item 7. Active profile, signed out only. The replacement
+                             for WL-143's automatic release, for an account deleted or abandoned in
+                             the web portal: the confirmation says it keeps every row. -->
+                        <Button Margin="8,0,0,0" Command="{Binding DetachFromAccountCommand}"
+                                IsVisible="{Binding CanDetachFromAccount}"
+                                Background="{DynamicResource Surface}" Foreground="{DynamicResource TextSecondary}"
+                                FontSize="12" FontWeight="500" Padding="8,5" CornerRadius="7"
+                                VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
+                            <TextBlock Text="Detach from account..." />
+                        </Button>
                     </StackPanel>
 
                     <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center"
@@ -756,12 +766,49 @@
                                        Foreground="{DynamicResource TextSecondary}"
                                        IsVisible="{Binding IsLockedOut}"
                                        Text="{Binding LockoutCountdown}" />
+                            <!-- Plan 12 item 6. A reset redeemed in the browser clears the server's
+                                 lockout, but this install cannot see it happen. Sends nothing: it
+                                 only re-enables Sign in for the new password. -->
+                            <Button Margin="4,0,0,0" Command="{Binding ForgetLockoutCommand}"
+                                    IsVisible="{Binding ShowResetPasswordEscape}"
+                                    Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
+                                    FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
+                                    VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
+                                <TextBlock Text="I've reset my password" />
+                            </Button>
                             <Button Margin="4,0,0,0" Command="{Binding SignOutCommand}"
                                     IsVisible="{Binding !IsSignedOutOfApi}"
                                     Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
                                     FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
                                     VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
                                 <TextBlock Text="Sign out" />
+                            </Button>
+                            <!-- Plan 12 item 5. Signed in, or signed out by the server - the portal is
+                                 where the password, devices and the account itself are managed, and
+                                 where whatever revoked this session was most likely done. -->
+                            <Button Margin="4,0,0,0" Command="{Binding OpenPortalCommand}"
+                                    IsVisible="{Binding ShowManageAccount}"
+                                    Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
+                                    FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
+                                    VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
+                                <TextBlock Text="Manage account" />
+                            </Button>
+                        </StackPanel>
+
+                        <!-- Plan 12 item 5. Accounts are made on the server's web portal, so a
+                             signed-out panel says where - or, for a server that has not advertised a
+                             portal, who to ask. No URL is ever guessed from the API endpoint. -->
+                        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingLarge}" VerticalAlignment="Center">
+                            <TextBlock VerticalAlignment="Center" FontSize="12" TextWrapping="Wrap" MaxWidth="420"
+                                       Foreground="{DynamicResource TextSecondary}"
+                                       IsVisible="{Binding PortalHint, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                       Text="{Binding PortalHint}" />
+                            <Button Command="{Binding OpenPortalCommand}"
+                                    IsVisible="{Binding ShowOpenPortal}"
+                                    Background="{DynamicResource Surface}" Foreground="{DynamicResource TextPrimary}"
+                                    FontSize="13" FontWeight="500" Padding="8,6" CornerRadius="7"
+                                    VerticalAlignment="Center" BorderThickness="1" BorderBrush="{DynamicResource Border}">
+                                <TextBlock Text="Open web portal" />
                             </Button>
                         </StackPanel>
 
