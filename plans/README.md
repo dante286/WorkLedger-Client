@@ -31,7 +31,7 @@ the M6 plan rather than getting its own file, so plans 1–7 cover the 8 origina
 | 9 | [09-auth-capabilities-and-account-ui.md](09-auth-capabilities-and-account-ui.md) | [WL-146](https://mnisan.atlassian.net/browse/WL-146) | 8 | merged |
 | 10 | [10-account-management.md](10-account-management.md) | [WL-139](https://mnisan.atlassian.net/browse/WL-139) (WL-140…WL-144) | 8, 9, **API S8** | merged |
 | 11 | [11-per-account-profiles.md](11-per-account-profiles.md) | [WL-148](https://mnisan.atlassian.net/browse/WL-148) | 8, 9, 10 | merged |
-| 12 | [12-account-lifecycle-to-web-portal.md](12-account-lifecycle-to-web-portal.md) | [WL-173](https://mnisan.atlassian.net/browse/WL-173) (WL-174…WL-177, re-scoped) | 8, 9, 10, 11, **API S11** (merged, pin `eb743d4`) | implemented, in review |
+| 12 | [12-account-lifecycle-to-web-portal.md](12-account-lifecycle-to-web-portal.md) | [WL-173](https://mnisan.atlassian.net/browse/WL-173) (WL-174…WL-177, re-scoped) | 8, 9, 10, 11, **API S11** (merged, pin `eb743d4`) | merged |
 
 ## Sequencing
 
