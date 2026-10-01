@@ -31,7 +31,7 @@ the M6 plan rather than getting its own file, so plans 1–7 cover the 8 origina
 | 9 | [09-auth-capabilities-and-account-ui.md](09-auth-capabilities-and-account-ui.md) | [WL-146](https://mnisan.atlassian.net/browse/WL-146) | 8 | merged |
 | 10 | [10-account-management.md](10-account-management.md) | [WL-139](https://mnisan.atlassian.net/browse/WL-139) (WL-140…WL-144) | 8, 9, **API S8** | merged |
 | 11 | [11-per-account-profiles.md](11-per-account-profiles.md) | [WL-148](https://mnisan.atlassian.net/browse/WL-148) | 8, 9, 10 | merged |
-| 12 | [12-account-lifecycle-to-web-portal.md](12-account-lifecycle-to-web-portal.md) | [WL-173](https://mnisan.atlassian.net/browse/WL-173) (WL-174…WL-177, re-scoped) | 8, 9, 10, 11, **API S11** | not started (rewritten) |
+| 12 | [12-account-lifecycle-to-web-portal.md](12-account-lifecycle-to-web-portal.md) | [WL-173](https://mnisan.atlassian.net/browse/WL-173) (WL-174…WL-177, re-scoped) | 8, 9, 10, 11, **API S11** (merged, pin `eb743d4`) | implemented, in review |
 
 ## Sequencing
 
@@ -67,10 +67,13 @@ the M6 plan rather than getting its own file, so plans 1–7 cover the 8 origina
   with an existing account — nothing more. Registration, claim, password change and reset, device management,
   sign-out-everywhere, account deletion and every operator action live in the server's web portal
   (`WorkLedger-API/plans/S11-web-portal.md`). The client stays fully usable with no server at all.
-- **12 follows 11**, and through it 8–10 — the same files again. It is **blocked on the server's S11**, whose
-  handoff (`WorkLedger-API/plans/S11-client-handoff.md`, written by S11 group F) is authoritative for the
-  re-vendor. It should not ship before a server with the portal is available to its users, because it removes
-  the client's only registration path.
+- **12 follows 11**, and through it 8–10 — the same files again. It was blocked on the server's S11, which
+  merged 2026-09-29 (dante286/WorkLedger-API#24); its handoff, `WorkLedger-API/plans/S11-client-handoff.md`, is
+  authoritative for the re-vendor and pins **`eb743d4`**. It should not ship before a server with the portal
+  is available to its users, because it removes the client's only registration path.
+- **12 landed as one branch, one commit per ticket**, so each step is attributable: the re-vendor first and
+  green on its own (WL-174), then the removal (WL-175, `feat!`), then the portal links, the stale-lockout
+  escape and Detach from account (WL-176, with their tests), then the docs (WL-177).
 - **12 is mostly deletion, and it is not a wire break.** It removes plans 9 and 10's account surface; the
   server keeps every JSON route those plans call as a compatibility route, so older builds keep working. What
   it adds is small: portal links from `AuthCapabilitiesResponse.PortalUrl`, an "I've reset my password"
@@ -141,8 +144,9 @@ that cannot be made. The guard stays the invariant; the profile is the convenien
 
 The backend is a **real, separate repo** — `WorkLedger-API` (`E:\GitHub-Repos\WorkLedger-API`) — with its own
 plan set. It is **C# / ASP.NET Core + EF Core + Postgres**, *not* the FastAPI/SQLAlchemy service this repo's
-`README.md` used to describe (corrected by Plan 7 item 10). **S0–S5 have merged** (the deployable
-single-account server, v0.1.0); **S6–S9 are written but not implemented**.
+`README.md` used to describe (corrected by Plan 7 item 10). **S0–S11 have merged**: the deployable
+single-account server (S0–S5, v0.1.0), user accounts (S6–S9), multi-user operations (S10) and the web portal
+(S11).
 
 The two repos meet **only** at `WorkLedger.Contracts`, the shared DTO library. Plan 6 consumes it rather than
 defining its own wire types — that shared-compiler-contract is the reason the server is C#. There is no

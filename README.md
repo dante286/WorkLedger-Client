@@ -27,11 +27,12 @@ This repository is the **client**. The backend lives in a separate repository, [
 - Two transports behind one `ISyncProvider` abstraction:
   - **`FileSyncProvider`** — sync through a shared folder (Dropbox / OneDrive / network share), no server required
   - **`ApiSyncProvider`** — sync against a self‑hosted WorkLedger-API instance, signing in with an email and password
-- Driven from the Settings tab: a **Sync Mode** switch (Off / Shared folder / WorkLedger API), device
-  registration, a sync interval, a *Sync Now* button, and a last‑synced readout
+- Driven from the Settings tab: a **Sync Mode** switch (Off / Shared folder / WorkLedger API), sign‑in,
+  a sync interval, a *Sync Now* button, and a last‑synced readout
 - A safety backup taken before the first remote change of a sync run overwrites or deletes local data
-- Account management from the same panel: the devices signed in to your account, changing your password, signing every device out, and deleting the account
-- 277 unit/integration tests, including multi‑device merge scenarios and cross‑repo contract drift guards
+- One local database per signed‑in account (profiles), switched live on sign‑in
+- Links to the server's web portal, where accounts are created and managed — the app itself only signs in
+- 275 unit/integration tests, including multi‑device merge scenarios and cross‑repo contract drift guards
 
 **Backend** — implemented and deployable; see [WorkLedger-API](https://github.com/dante286/WorkLedger-API).
 
@@ -130,7 +131,7 @@ Sync is **off by default** — nothing leaves the machine until you choose a mod
 |---|---|---|
 | **Off** | — | The default. No provider is constructed and nothing is contacted. |
 | **Shared folder** | A folder both installs can see | Each push writes one JSON file into `<folder>/changes/`; each pull reads the files the other devices wrote. No server. |
-| **WorkLedger API** | A reachable [WorkLedger-API](https://github.com/dante286/WorkLedger-API) instance and an account on it | Enter your email and password and press **Sign in** once — the server issues a JWT scoped to this device and the client stores it. The password is used for that one call and is **never saved**; only the email is. This device is enrolled as a side effect of signing in. No account yet? If the server allows it, **Create an account** appears right there; on a server that already holds data from before user accounts existed, **Claim this server** takes ownership of it instead. Once signed in the same panel lists the devices on your account, changes your password, signs every device out, and — behind a deliberately awkward danger zone — deletes the account. |
+| **WorkLedger API** | A reachable [WorkLedger-API](https://github.com/dante286/WorkLedger-API) instance and an account on it | Get an account from the server's **web portal** (an administrator sends you an invite), then enter your email and password here and press **Sign in** once — the server issues a JWT scoped to this device and the client stores it. The password is used for that one call and is **never saved**; only the email is. This device is enrolled as a side effect of signing in. **Open web portal** and **Manage account** take you to the portal for everything else. |
 
 The **Sync Interval** setting drives a background tick (or `Manual only`, in which case *Sync Now* is the only
 trigger). **Backup Before Merge** takes a copy of the settings and the active profile's database into
@@ -314,40 +315,40 @@ files are pruned after a configurable retention window.
 The backend is a separate repository: **https://github.com/dante286/WorkLedger-API**
 
 It is C# / ASP.NET Core Minimal APIs on .NET 10, EF Core + Npgsql → PostgreSQL, with JWT bearer auth, and it
-deploys as a single `docker compose up` on a homelab box or small VPS. v1 is single‑account / multi‑device:
-one account, one row per registered device.
+deploys as a single `docker compose up` on a homelab box or small VPS. It is multi‑user and multi‑device:
+each user account owns its devices and its data, and the server is administered by an operator.
 
-In outline, it exposes sign-in, registration and account management, `whoami`, the `/sync/push` and
-`/sync/pull` pair described above, and three read‑only report endpoints. **The endpoint list, configuration
+In outline, it exposes sign-in, `whoami`, a capabilities probe, the `/sync/push` and `/sync/pull` pair
+described above, three read‑only report endpoints, and a **web portal**. **The endpoint list, configuration
 variables, deployment quickstart, and operational notes are documented in that repository's `README.md`** —
 they are deliberately not restated here, so the two cannot drift.
 
-The app asks the server what it allows (`GET /auth/capabilities`) and shows only that: no registration form on
-a server with signups switched off, a signup-secret field only where one is required, a password rule that is
-the server's own minimum rather than a guess, and **Claim this server** only while there is unclaimed data to
-take. A server too old to answer, or one that is simply unreachable, leaves a working sign-in form rather than
-an error.
+**Accounts live in the portal, not in this app.** Creating an account (from an administrator's invite),
+changing or resetting a password, seeing and removing the devices signed in to an account, signing every
+device out, and deleting the account are all pages in the server's web portal — as is everything an
+administrator does. The app only signs an existing account in and syncs. It learns where the portal is from
+the server (`GET /auth/capabilities`) and links to it: **Open web portal** while signed out, **Manage account**
+once signed in. It never guesses the address, and it opens only a secure `https://` link (or `http://` to this
+machine, for a server you are running locally). A server too old to have a portal, or one that is unreachable,
+leaves a working sign‑in form and a sentence pointing at its administrator.
 
 Signing in with an email and password mints a bearer token scoped to *this device*, and enrols the device as
-a side effect. The client persists the token and the email — never the password. Because tokens can be
-revoked server‑side (a password change, a sign‑out‑everywhere, this device being removed from another
-machine), a rejected token means **"you have been signed out"** rather than **"try again"**: the client stops
-syncing and waits for a person, rather than retrying credentials it does not have. Your work keeps saving
-locally throughout, and goes up when you sign back in.
+a side effect. The client persists the token and the email — never the password. Anything done to the account
+in the portal — a password change or reset, this device removed, a sign‑out‑everywhere, the account suspended
+or deleted — revokes that token, and a rejected token means **"you have been signed out"** rather than **"try
+again"**: the client stops syncing and waits for a person, rather than retrying credentials it does not have.
+Your work keeps saving locally throughout, and goes up when you sign back in.
 
-Signed in, the panel is also where the account is managed. It lists every device signed in to the account,
-marks the one you are looking at, and can remove any of them — **including this one**, which is how you sign a
-machine out from somewhere else. Removing a device revokes its access and nothing more: everything it
-recorded belongs to the *account*, stays there, and the device reconnects simply by signing in again.
-Changing your password and *Sign out everywhere* both sign your **other** devices out and keep this one
-signed in.
+Two things in the app exist because it cannot see the portal:
 
-Deleting the account is deliberately the hardest thing in the panel to do by accident — a collapsed section,
-your password, your email typed to match, and a confirmation. What it does is worth stating precisely, once:
-**the server's copy is deleted permanently and immediately, with no undo, and this device's copy is kept.**
-Every project, task and time entry stays in the local database, the app carries on working offline, and sync
-switches itself off because there is no longer an account to sync with. If you want a copy somewhere else,
-**Export CSV** on the Reports tab is the way to take one — do it before you delete.
+- **I've reset my password.** Too many wrong passwords lock an account for a while, and the app keeps Sign in
+  disabled until the lock lifts. A reset redeemed in the portal clears the lock straight away, but the app
+  can't know that — so while it is showing a lockout, this button re-enables Sign in for the new password. It
+  sends nothing by itself.
+- **Detach from account…** (Settings, under the active profile, while signed out). If the account this
+  data belonged to has been deleted, the data is still tied to it locally, and the next sign‑in would start
+  an empty profile beside it. Detaching forgets which account it belonged to and **keeps every project, task
+  and entry**, so the next account you sign in with takes it over and syncs it.
 
 ### The shared contract
 
