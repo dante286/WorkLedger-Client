@@ -13,6 +13,22 @@ existed, and their version numbers never described a shipped feature set. They a
 for provenance - the tags and their release assets still exist on GitHub - but nothing after
 this point continues their numbering.
 
+## [0.3.0](https://github.com/dante286/WorkLedger-Client/compare/v0.2.0...v0.3.0) (2026-10-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* **auth:** the desktop app no longer offers registration, claiming a server, changing a password, listing or removing devices, signing out everywhere or deleting an account. Use the server's web portal instead.
+* **sync:** POST /auth/register-device is gone server-side. Existing installs must sign in with an email and password; the stored device token no longer validates and the bootstrap secret is no longer part of the sync configuration.
+
+### Features
+
+* **auth:** add account registration, server claim, and a capability-aware sign-in UI ([#26](https://github.com/dante286/WorkLedger-Client/issues/26)) ([bf47adc](https://github.com/dante286/WorkLedger-Client/commit/bf47adc509c5964204b6f48b806f78122c5d3727))
+* **auth:** manage devices, change password, sign out everywhere, and delete the account (WL-139) ([#27](https://github.com/dante286/WorkLedger-Client/issues/27)) ([816d5dc](https://github.com/dante286/WorkLedger-Client/commit/816d5dc25815bc2481b2ce82e61f50c1ca3646b4))
+* **auth:** move the account lifecycle to the server's web portal (WL-173) ([#29](https://github.com/dante286/WorkLedger-Client/issues/29)) ([58656a5](https://github.com/dante286/WorkLedger-Client/commit/58656a5bf4b36a0db3a8de14b658587842cca2dd))
+* **profiles:** give each signed-in account its own local database (WL-148) ([#28](https://github.com/dante286/WorkLedger-Client/issues/28)) ([67d62f4](https://github.com/dante286/WorkLedger-Client/commit/67d62f415564c62c79b3dc0056df733bac1c5146))
+* **sync:** authenticate against WorkLedger-API by login instead of device bootstrap (WL-105) ([#24](https://github.com/dante286/WorkLedger-Client/issues/24)) ([2933113](https://github.com/dante286/WorkLedger-Client/commit/2933113d0a66e6a253794b28f5ba51d14facc31a))
+
 ## [0.2.0](https://github.com/dante286/WorkLedger-Client/compare/v0.1.0...v0.2.0) (2026-08-24)
 
 
